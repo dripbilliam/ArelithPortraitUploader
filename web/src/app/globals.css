@@ -258,6 +258,58 @@ a {
   gap: 4px;
 }
 
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 8, 6, 0.64);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  z-index: 40;
+}
+
+.modalCard {
+  width: min(92vw, 720px);
+  max-height: 88vh;
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid #a88455;
+  background: linear-gradient(180deg, rgba(255, 247, 224, 0.95), rgba(238, 217, 173, 0.92));
+  box-shadow: 0 20px 36px rgba(5, 4, 3, 0.55);
+  padding: 14px;
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.modalTitle {
+  font-family: var(--font-cinzel), serif;
+  font-size: 1.1rem;
+  color: #3b2815;
+}
+
+.previewImageWrap {
+  border: 1px solid #b29263;
+  border-radius: 10px;
+  background: rgba(42, 31, 20, 0.2);
+  padding: 8px;
+  min-height: 140px;
+  display: grid;
+  place-items: center;
+}
+
+.previewImage {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  image-rendering: pixelated;
+}
+
 .container > .panel:nth-child(1) {
   animation-delay: 50ms;
 }

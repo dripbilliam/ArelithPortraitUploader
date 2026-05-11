@@ -108,3 +108,58 @@ export async function convertImageToTgaVariants(file: File): Promise<Array<{ suf
     bitmap.close();
   }
 }
+
+export function decodeTgaToImageData(buffer: ArrayBuffer): ImageData {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length < 18) {
+    throw new Error("Invalid TGA: file too small");
+  }
+
+  const imageType = bytes[2];
+  if (imageType !== 2) {
+    throw new Error(`Unsupported TGA image type: ${imageType}`);
+  }
+
+  const width = bytes[12] | (bytes[13] << 8);
+  const height = bytes[14] | (bytes[15] << 8);
+  const pixelDepth = bytes[16];
+  const imageDescriptor = bytes[17];
+  const idLength = bytes[0];
+
+  if (width <= 0 || height <= 0) {
+    throw new Error("Invalid TGA dimensions");
+  }
+
+  const bytesPerPixel = pixelDepth === 24 ? 3 : pixelDepth === 32 ? 4 : 0;
+  if (bytesPerPixel === 0) {
+    throw new Error(`Unsupported TGA pixel depth: ${pixelDepth}`);
+  }
+
+  const dataStart = 18 + idLength;
+  const expectedSize = width * height * bytesPerPixel;
+  if (bytes.length < dataStart + expectedSize) {
+    throw new Error("Invalid TGA: truncated pixel data");
+  }
+
+  const originTop = (imageDescriptor & 0x20) !== 0;
+  const out = new Uint8ClampedArray(width * height * 4);
+  let src = dataStart;
+
+  for (let y = 0; y < height; y += 1) {
+    const writeY = originTop ? y : height - 1 - y;
+    for (let x = 0; x < width; x += 1) {
+      const dst = (writeY * width + x) * 4;
+      const b = bytes[src++];
+      const g = bytes[src++];
+      const r = bytes[src++];
+      const a = bytesPerPixel === 4 ? bytes[src++] : 255;
+
+      out[dst] = r;
+      out[dst + 1] = g;
+      out[dst + 2] = b;
+      out[dst + 3] = a;
+    }
+  }
+
+  return new ImageData(out, width, height);
+}

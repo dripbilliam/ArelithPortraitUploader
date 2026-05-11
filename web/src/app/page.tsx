@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase";
-import { convertImageToTgaVariants } from "@/lib/tga";
+import { convertImageToTgaVariants, decodeTgaToImageData } from "@/lib/tga";
 
 type UploadResponse = {
   imageId: string;
@@ -119,6 +119,10 @@ export default function Home() {
   const [statusMessage, setStatusMessage] = useState("");
   const [isError, setIsError] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [previewTitle, setPreviewTitle] = useState("");
+  const [previewImageUrl, setPreviewImageUrl] = useState("");
 
   const loggedInEmail = useMemo(() => session?.user?.email ?? "", [session]);
 
@@ -213,6 +217,14 @@ export default function Home() {
 
     return () => subscription.unsubscribe();
   }, [supabase, loadSessionState]);
+
+  useEffect(() => {
+    return () => {
+      if (previewImageUrl) {
+        URL.revokeObjectURL(previewImageUrl);
+      }
+    };
+  }, [previewImageUrl]);
 
   const handleAuth = async (event: FormEvent) => {
     event.preventDefault();
@@ -534,6 +546,9 @@ export default function Home() {
     }
 
     setIsError(false);
+    setIsPreviewOpen(true);
+    setIsPreviewLoading(true);
+    setPreviewTitle(image.final_file_name);
     const path = `${image.converted_path_base}_H.tga`;
     const { data, error } = await supabase.storage
       .from("portraits-converted")
@@ -542,11 +557,63 @@ export default function Home() {
     if (error || !data?.signedUrl) {
       setIsError(true);
       setStatusMessage(`Could not create view link: ${error?.message ?? "unknown error"}`);
+      setIsPreviewLoading(false);
       return;
     }
 
-    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
-    setStatusMessage(`Opened ${image.final_file_name}.`);
+    try {
+      const response = await fetch(data.signedUrl);
+      if (!response.ok) {
+        throw new Error(`Fetch failed (${response.status})`);
+      }
+
+      const tgaBuffer = await response.arrayBuffer();
+      const imageData = decodeTgaToImageData(tgaBuffer);
+      const canvas = document.createElement("canvas");
+      canvas.width = imageData.width;
+      canvas.height = imageData.height;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        throw new Error("Could not render preview canvas");
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+      const pngBlob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            reject(new Error("Failed to encode preview image"));
+            return;
+          }
+          resolve(blob);
+        }, "image/png");
+      });
+
+      setPreviewImageUrl((prev) => {
+        if (prev) {
+          URL.revokeObjectURL(prev);
+        }
+        return URL.createObjectURL(pngBlob);
+      });
+      setStatusMessage(`Preview loaded for ${image.final_file_name}.`);
+    } catch (viewError) {
+      setIsError(true);
+      setStatusMessage(viewError instanceof Error ? viewError.message : "Could not preview TGA.");
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  };
+
+  const closePreview = () => {
+    setIsPreviewOpen(false);
+    setIsPreviewLoading(false);
+    setPreviewTitle("");
+    setPreviewImageUrl((prev) => {
+      if (prev) {
+        URL.revokeObjectURL(prev);
+      }
+      return "";
+    });
   };
 
   return (
@@ -754,6 +821,32 @@ export default function Home() {
           </section>
         ) : null}
       </div>
+
+      {isPreviewOpen ? (
+        <div className="modalBackdrop" onClick={closePreview}>
+          <div className="modalCard" onClick={(event) => event.stopPropagation()}>
+            <div className="modalHeader">
+              <h3 className="modalTitle">{previewTitle || "TGA Preview"}</h3>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={closePreview}
+              >
+                Close
+              </button>
+            </div>
+            <div className="previewImageWrap">
+              {isPreviewLoading ? (
+                <p className="hint">Rendering preview...</p>
+              ) : previewImageUrl ? (
+                <img className="previewImage" src={previewImageUrl} alt={previewTitle || "TGA preview"} />
+              ) : (
+                <p className="hint">No preview available.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
