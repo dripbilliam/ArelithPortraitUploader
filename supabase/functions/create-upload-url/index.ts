@@ -22,17 +22,34 @@ type UploadRequest = {
 
 const allowedSourceMimes = new Set(["image/jpeg", "image/jpg"]);
 
-const MAX_PREFIX_LENGTH = 15;
+const PREFIX_RANDOM_HEAD_LENGTH = 3;
+const PREFIX_BODY_LENGTH = 11;
+const MAX_PREFIX_LENGTH = PREFIX_RANDOM_HEAD_LENGTH + 1 + PREFIX_BODY_LENGTH;
+const RANDOM_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
 
 function normalizePrefix(value: string): string {
   const lower = value.toLowerCase();
   const stripped = lower.replace(/[^a-z0-9_]/g, "_");
   const collapsed = stripped.replace(/_+/g, "_").replace(/^_+|_+$/g, "");
-  return collapsed.slice(0, MAX_PREFIX_LENGTH);
+  return collapsed;
 }
 
-function makeGeneratedPrefix(): string {
-  return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+function randomSegment(length: number): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  let out = "";
+  for (let i = 0; i < length; i += 1) {
+    out += RANDOM_CHARS[bytes[i] % RANDOM_CHARS.length];
+  }
+  return out;
+}
+
+function buildCandidatePrefix(userTail: string | null): string {
+  const head = randomSegment(PREFIX_RANDOM_HEAD_LENGTH);
+  const normalizedTail = (userTail ?? "").slice(0, PREFIX_BODY_LENGTH);
+  const missing = PREFIX_BODY_LENGTH - normalizedTail.length;
+  const suffix = missing > 0 ? randomSegment(missing) : "";
+  const body = `${normalizedTail}${suffix}`;
+  return `${head}_${body}`;
 }
 
 Deno.serve(async (req: Request) => {
@@ -116,7 +133,7 @@ Deno.serve(async (req: Request) => {
   const maxInsertAttempts = 5;
 
   for (let attempt = 0; attempt < maxInsertAttempts; attempt += 1) {
-    const candidatePrefix = normalizedRequestedPrefix ?? makeGeneratedPrefix();
+    const candidatePrefix = buildCandidatePrefix(normalizedRequestedPrefix);
 
     const { data: insertedRow, error: imageError } = await supabase
       .from("images")
@@ -143,9 +160,6 @@ Deno.serve(async (req: Request) => {
       break;
     }
 
-    if (normalizedRequestedPrefix) {
-      return errorResponse("That filename prefix is already in use", 409);
-    }
   }
 
   if (!imageRow) {

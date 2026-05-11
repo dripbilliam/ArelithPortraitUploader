@@ -491,7 +491,7 @@ export default function Home() {
                   maxLength={15}
                   placeholder="Example: myportrait"
                 />
-                <p className="hint">Allowed: letters, numbers, underscores. Max 15 chars for NWN compatibility.</p>
+                <p className="hint">We auto-format to 3 random chars + underscore + 11 chars from your prefix (or random if blank).</p>
 
                 <label className="label" htmlFor="file">
                   JPG or PNG file
