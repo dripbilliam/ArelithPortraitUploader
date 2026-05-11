@@ -260,6 +260,32 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  const chosenPrefixForCatalog = normalizedRequestedPrefix
+    ? normalizedRequestedPrefix.slice(0, PREFIX_BODY_LENGTH)
+    : null;
+  const convertedPathBase = `${userData.user.id}/${imageRow.id}`;
+  const { error: catalogError } = await supabase
+    .from("upload_files")
+    .upsert(
+      {
+        image_id: imageRow.id,
+        user_id: userData.user.id,
+        chosen_prefix: chosenPrefixForCatalog,
+        final_prefix: imageRow.filename_prefix,
+        final_file_name: `${imageRow.filename_prefix}H.tga`,
+        converted_path_base: convertedPathBase,
+        uploader_ip: identity.requesterIp,
+      },
+      { onConflict: "image_id" },
+    );
+
+  if (catalogError) {
+    return errorResponse(
+      `Failed to persist upload metadata: ${catalogError.message}`,
+      500,
+    );
+  }
+
   return new Response(
     JSON.stringify({
       imageId: imageRow.id,

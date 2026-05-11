@@ -22,14 +22,21 @@ type MyImageRow = {
   filename_prefix: string;
   status: "uploaded" | "processing" | "ready" | "failed";
   created_at: string;
+  final_file_name: string;
+  converted_path_base: string;
 };
 
-type DbImageMetaRow = {
-  id: string;
-  converted_path: string | null;
-  filename_prefix: string;
-  status: "uploaded" | "processing" | "ready" | "failed";
+type UploadFileRow = {
+  image_id: string;
+  final_prefix: string;
+  final_file_name: string;
+  converted_path_base: string;
   created_at: string;
+};
+
+type ImageStatusRow = {
+  id: string;
+  status: "uploaded" | "processing" | "ready" | "failed";
 };
 
 type DeleteImageResponse = {
@@ -56,19 +63,6 @@ type BulkDownloadJobStatus = {
 
 const POLL_INTERVAL_MS = 1500;
 const POLL_MAX_ATTEMPTS = 120;
-const STORAGE_LIST_PAGE_SIZE = 100;
-
-function extractConvertedBaseFromStorageName(name: string): string | null {
-  if (!/_[HLMST]\.tga$/i.test(name)) {
-    return null;
-  }
-
-  return name.replace(/_[HLMST]\.tga$/i, "");
-}
-
-function isUuidLike(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -135,82 +129,47 @@ export default function Home() {
 
     setIsLoadingMyImages(true);
     try {
-      const storageBases = new Map<string, string>();
-      let offset = 0;
+      const { data: catalogRows, error: catalogError } = await supabase
+        .from("upload_files")
+        .select("image_id, final_prefix, final_file_name, converted_path_base, created_at")
+        .eq("user_id", currentUserId)
+        .order("created_at", { ascending: false })
+        .limit(100);
 
-      while (true) {
-        const { data: pageData, error: listError } = await supabase.storage
-          .from("portraits-converted")
-          .list(currentUserId, {
-            limit: STORAGE_LIST_PAGE_SIZE,
-            offset,
-            sortBy: { column: "name", order: "asc" },
-          });
-
-        if (listError) {
-          throw new Error(`Failed to load storage uploads: ${listError.message}`);
-        }
-
-        const page = pageData ?? [];
-        for (const entry of page) {
-          const base = extractConvertedBaseFromStorageName(entry.name ?? "");
-          if (!base) {
-            continue;
-          }
-
-          const ts = entry.updated_at ?? entry.created_at ?? new Date().toISOString();
-          const prev = storageBases.get(base);
-          if (!prev || prev < ts) {
-            storageBases.set(base, ts);
-          }
-        }
-
-        if (page.length < STORAGE_LIST_PAGE_SIZE) {
-          break;
-        }
-
-        offset += STORAGE_LIST_PAGE_SIZE;
-        if (offset > 10000) {
-          break;
-        }
+      if (catalogError) {
+        throw new Error(`Failed to load upload catalog: ${catalogError.message}`);
       }
 
-      const bases = Array.from(storageBases.keys());
-      if (bases.length === 0) {
+      const uploads = (catalogRows ?? []) as UploadFileRow[];
+      if (uploads.length === 0) {
         setMyImages([]);
         return;
       }
 
-      const { data: dbRows, error: dbError } = await supabase
+      const imageIds = uploads.map((row) => row.image_id);
+      const { data: statusRows, error: statusError } = await supabase
         .from("images")
-        .select("id, converted_path, filename_prefix, status, created_at")
-        .in("converted_path", bases)
+        .select("id, status")
+        .in("id", imageIds)
         .limit(1000);
 
-      if (dbError) {
-        throw new Error(`Failed to load image metadata: ${dbError.message}`);
+      if (statusError) {
+        throw new Error(`Failed to load image status: ${statusError.message}`);
       }
 
-      const dbMetaByBase = new Map<string, DbImageMetaRow>();
-      for (const row of (dbRows ?? []) as DbImageMetaRow[]) {
-        if (row.converted_path) {
-          dbMetaByBase.set(row.converted_path, row);
-        }
+      const statusById = new Map<string, ImageStatusRow["status"]>();
+      for (const row of (statusRows ?? []) as ImageStatusRow[]) {
+        statusById.set(row.id, row.status);
       }
 
-      const rows = bases
-        .map((base): MyImageRow => {
-          const dbMeta = dbMetaByBase.get(base);
-          const fallbackPrefix = base.split("/").pop() ?? "storage-only";
-          return {
-            id: dbMeta?.id ?? `storage:${base}`,
-            filename_prefix: dbMeta?.filename_prefix ?? fallbackPrefix,
-            status: dbMeta?.status ?? "ready",
-            created_at: dbMeta?.created_at ?? storageBases.get(base) ?? new Date().toISOString(),
-          };
-        })
-        .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
-        .slice(0, 100);
+      const rows = uploads.map((row): MyImageRow => ({
+        id: row.image_id,
+        filename_prefix: row.final_prefix,
+        status: statusById.get(row.image_id) ?? "ready",
+        created_at: row.created_at,
+        final_file_name: row.final_file_name,
+        converted_path_base: row.converted_path_base,
+      }));
 
       setMyImages(rows);
     } catch {
@@ -524,12 +483,6 @@ export default function Home() {
   };
 
   const handleDeleteImage = async (image: MyImageRow) => {
-        if (!isUuidLike(image.id)) {
-          setIsError(true);
-          setStatusMessage("This item exists in storage only and has no DB row id to delete by. Run reconcile first.");
-          return;
-        }
-
     if (!supabase) {
       setIsError(true);
       setStatusMessage("Missing Supabase environment configuration.");
@@ -571,6 +524,29 @@ export default function Home() {
     } finally {
       setIsWorking(false);
     }
+  };
+
+  const handleViewImage = async (image: MyImageRow) => {
+    if (!supabase) {
+      setIsError(true);
+      setStatusMessage("Missing Supabase environment configuration.");
+      return;
+    }
+
+    setIsError(false);
+    const path = `${image.converted_path_base}_H.tga`;
+    const { data, error } = await supabase.storage
+      .from("portraits-converted")
+      .createSignedUrl(path, 60);
+
+    if (error || !data?.signedUrl) {
+      setIsError(true);
+      setStatusMessage(`Could not create view link: ${error?.message ?? "unknown error"}`);
+      return;
+    }
+
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    setStatusMessage(`Opened ${image.final_file_name}.`);
   };
 
   return (
@@ -749,17 +725,28 @@ export default function Home() {
                 {myImages.map((image) => (
                   <div key={image.id} className="uploadsRow">
                     <div className="uploadsMeta">
-                      <p className="hint"><code className="mono">{image.filename_prefix}</code> - {image.status}</p>
+                      <p className="hint"><code className="mono">{image.final_file_name}</code> - {image.status}</p>
+                      <p className="hint">Prefix: <code className="mono">{image.filename_prefix}</code></p>
                       <p className="hint">Uploaded {new Date(image.created_at).toLocaleString()}</p>
                     </div>
-                    <button
-                      className="button secondary deleteButton"
-                      type="button"
-                      disabled={isWorking}
-                      onClick={() => handleDeleteImage(image)}
-                    >
-                      Delete
-                    </button>
+                    <div className="row" style={{ gridTemplateColumns: "1fr 1fr", gap: "0.5rem", alignItems: "center" }}>
+                      <button
+                        className="button secondary"
+                        type="button"
+                        disabled={isWorking}
+                        onClick={() => handleViewImage(image)}
+                      >
+                        View
+                      </button>
+                      <button
+                        className="button secondary deleteButton"
+                        type="button"
+                        disabled={isWorking}
+                        onClick={() => handleDeleteImage(image)}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
