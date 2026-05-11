@@ -143,39 +143,39 @@ export default function Home() {
       const uploads = (catalogRows ?? []) as UploadFileRow[];
       if (uploads.length === 0) {
         setMyImages([]);
-        return;
+      } else {
+        const imageIds = uploads.map((row) => row.image_id);
+        const { data: statusRows, error: statusError } = await supabase
+          .from("images")
+          .select("id, status")
+          .in("id", imageIds)
+          .limit(1000);
+
+        if (statusError) {
+          throw new Error(`Failed to load image status: ${statusError.message}`);
+        }
+
+        const statusById = new Map<string, ImageStatusRow["status"]>();
+        for (const row of (statusRows ?? []) as ImageStatusRow[]) {
+          statusById.set(row.id, row.status);
+        }
+
+        const rows = uploads.map((row): MyImageRow => ({
+          id: row.image_id,
+          filename_prefix: row.final_prefix,
+          status: statusById.get(row.image_id) ?? "ready",
+          created_at: row.created_at,
+          final_file_name: row.final_file_name,
+          converted_path_base: row.converted_path_base,
+        }));
+
+        setMyImages(rows);
       }
-
-      const imageIds = uploads.map((row) => row.image_id);
-      const { data: statusRows, error: statusError } = await supabase
-        .from("images")
-        .select("id, status")
-        .in("id", imageIds)
-        .limit(1000);
-
-      if (statusError) {
-        throw new Error(`Failed to load image status: ${statusError.message}`);
-      }
-
-      const statusById = new Map<string, ImageStatusRow["status"]>();
-      for (const row of (statusRows ?? []) as ImageStatusRow[]) {
-        statusById.set(row.id, row.status);
-      }
-
-      const rows = uploads.map((row): MyImageRow => ({
-        id: row.image_id,
-        filename_prefix: row.final_prefix,
-        status: statusById.get(row.image_id) ?? "ready",
-        created_at: row.created_at,
-        final_file_name: row.final_file_name,
-        converted_path_base: row.converted_path_base,
-      }));
-
-      setMyImages(rows);
     } catch {
       setMyImages([]);
+    } finally {
+      setIsLoadingMyImages(false);
     }
-    setIsLoadingMyImages(false);
   }, [supabase]);
 
   const loadSessionState = useCallback(async (currentUserId: string | null) => {
