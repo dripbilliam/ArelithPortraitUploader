@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase";
-import { convertPngToTgaVariants } from "@/lib/tga";
+import { convertImageToTgaVariants } from "@/lib/tga";
 
 type UploadResponse = {
   imageId: string;
@@ -149,9 +149,10 @@ export default function Home() {
       return;
     }
 
-    if (selectedFile.type !== "image/png") {
+    const fileType = selectedFile.type.toLowerCase();
+    if (fileType !== "image/jpeg" && fileType !== "image/jpg") {
       setIsError(true);
-      setStatusMessage("Only PNG files are allowed.");
+      setStatusMessage("Only JPG/JPEG files are allowed.");
       return;
     }
 
@@ -200,7 +201,7 @@ export default function Home() {
 
       setStatusMessage(`Upload complete. Building TGA variants in browser...`);
 
-      const variants = await convertPngToTgaVariants(selectedFile);
+      const variants = await convertImageToTgaVariants(selectedFile);
       const convertedPathBase = `${session.user.id}/${data.imageId}`;
 
       for (const variant of variants) {
@@ -234,7 +235,7 @@ export default function Home() {
       }
 
       setLastFilenamePrefix(data.filenamePrefix);
-      setStatusMessage(`PNG converted to 5 TGAs and saved for ${data.imageId}.`);
+      setStatusMessage(`JPG converted to 5 TGAs and saved for ${data.imageId}.`);
       setSelectedFile(null);
     } catch (error) {
       setIsError(true);
@@ -389,7 +390,7 @@ export default function Home() {
 
         <section className="panel">
           <h2 className="title">Upload</h2>
-          <p className="lead">Limit: 25 MiB. Accepted: PNG only. Conversion to 5 TGAs happens in your browser.</p>
+          <p className="lead">Limit: 25 MiB. Accepted: JPG/JPEG only. Conversion to 5 TGAs happens in your browser.</p>
 
           <form className="stack" onSubmit={handleUpload}>
             <div className="row">
@@ -409,13 +410,13 @@ export default function Home() {
                 <p className="hint">Allowed: letters, numbers, underscores. Max 15 chars for NWN compatibility.</p>
 
                 <label className="label" htmlFor="file">
-                  PNG file
+                  JPG file
                 </label>
                 <input
                   id="file"
                   className="input"
                   type="file"
-                  accept="image/png"
+                  accept=".jpg,.jpeg,image/jpeg"
                   onChange={(event) =>
                     setSelectedFile(event.target.files?.[0] ?? null)
                   }

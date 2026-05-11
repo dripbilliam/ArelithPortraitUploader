@@ -92,7 +92,7 @@ function renderPortraitCanvas(source: CanvasImageSource, spec: PortraitSpec): HT
   return finalCanvas;
 }
 
-export async function convertPngToTgaVariants(file: File): Promise<Array<{ suffix: PortraitSpec["suffix"]; blob: Blob }>> {
+export async function convertImageToTgaVariants(file: File): Promise<Array<{ suffix: PortraitSpec["suffix"]; blob: Blob }>> {
   const bitmap = await createImageBitmap(file);
   try {
     return portraitSpecs.map((spec) => {

@@ -19,6 +19,8 @@ type UploadRequest = {
   filenamePrefix?: string;
 };
 
+const allowedSourceMimes = new Set(["image/jpeg", "image/jpg"]);
+
 const MAX_PREFIX_LENGTH = 15;
 
 function normalizePrefix(value: string): string {
@@ -75,8 +77,8 @@ Deno.serve(async (req: Request) => {
     return errorResponse("Missing required fields", 400);
   }
 
-  if (sourceMime !== "image/png") {
-    return errorResponse("Only PNG uploads are supported", 400);
+  if (!allowedSourceMimes.has(sourceMime.toLowerCase())) {
+    return errorResponse("Only JPG/JPEG uploads are supported", 400);
   }
 
   const normalized = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
