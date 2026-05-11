@@ -28,6 +28,7 @@ const MAX_PREFIX_LENGTH = PREFIX_RANDOM_HEAD_LENGTH + 1 + PREFIX_BODY_LENGTH;
 const RANDOM_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
 const DEFAULT_TOTAL_IMAGES_PER_IP_LIMIT = 50;
 const TGA_VARIANTS_PER_UPLOAD = 5;
+const STORAGE_LIST_PAGE_SIZE = 100;
 
 type UploadLimitRow = {
   images_per_ip_limit: number;
@@ -54,6 +55,46 @@ async function getUploadLimits(
       ? Math.max(1, Math.floor(row.images_per_ip_limit))
       : DEFAULT_TOTAL_IMAGES_PER_IP_LIMIT,
   };
+}
+
+async function countCurrentUserStorageImages(
+  adminClient: ReturnType<typeof createClient>,
+  userId: string,
+): Promise<{ count: number; error: string | null }> {
+  let offset = 0;
+  let total = 0;
+
+  while (true) {
+    const { data, error } = await adminClient.storage
+      .from("portraits-converted")
+      .list(userId, {
+        limit: STORAGE_LIST_PAGE_SIZE,
+        offset,
+        sortBy: { column: "name", order: "asc" },
+      });
+
+    if (error) {
+      return { count: 0, error: error.message };
+    }
+
+    const page = data ?? [];
+    for (const entry of page) {
+      if (typeof entry.name === "string" && /_[HLMST]\.tga$/i.test(entry.name)) {
+        total += 1;
+      }
+    }
+
+    if (page.length < STORAGE_LIST_PAGE_SIZE) {
+      break;
+    }
+
+    offset += STORAGE_LIST_PAGE_SIZE;
+    if (offset > 20000) {
+      break;
+    }
+  }
+
+  return { count: total, error: null };
 }
 
 function normalizePrefix(value: string): string {
@@ -140,24 +181,22 @@ Deno.serve(async (req: Request) => {
   }
 
   const limits = await getUploadLimits(adminClient);
-  const { count: existingUploadCount, error: uploadCountError } = await adminClient
-    .from("images")
-    .select("id", { count: "exact", head: true })
-    .eq("uploader_ip", identity.requesterIp);
+  const storageCountResult = await countCurrentUserStorageImages(
+    adminClient,
+    userData.user.id,
+  );
 
-  if (uploadCountError) {
+  if (storageCountResult.error) {
     return errorResponse(
-      `Failed to evaluate upload limit: ${uploadCountError.message}`,
+      `Failed to evaluate storage-backed upload limit: ${storageCountResult.error}`,
       500,
     );
   }
 
-  const currentUploads = existingUploadCount ?? 0;
-  const projectedUploads = currentUploads + 1;
-  const projectedImages = projectedUploads * TGA_VARIANTS_PER_UPLOAD;
+  const projectedImages = storageCountResult.count + TGA_VARIANTS_PER_UPLOAD;
   if (projectedImages > limits.imagesPerIpLimit) {
     return errorResponse(
-      `Upload limit reached for this IP. Max total images: ${limits.imagesPerIpLimit}.`,
+      `Upload limit reached for this account. Max total images: ${limits.imagesPerIpLimit}.`,
       429,
     );
   }

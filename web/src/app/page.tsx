@@ -24,6 +24,14 @@ type MyImageRow = {
   created_at: string;
 };
 
+type DbImageMetaRow = {
+  id: string;
+  converted_path: string | null;
+  filename_prefix: string;
+  status: "uploaded" | "processing" | "ready" | "failed";
+  created_at: string;
+};
+
 type DeleteImageResponse = {
   imageId: string;
   deleted: boolean;
@@ -48,6 +56,19 @@ type BulkDownloadJobStatus = {
 
 const POLL_INTERVAL_MS = 1500;
 const POLL_MAX_ATTEMPTS = 120;
+const STORAGE_LIST_PAGE_SIZE = 100;
+
+function extractConvertedBaseFromStorageName(name: string): string | null {
+  if (!/_[HLMST]\.tga$/i.test(name)) {
+    return null;
+  }
+
+  return name.replace(/_[HLMST]\.tga$/i, "");
+}
+
+function isUuidLike(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -107,20 +128,93 @@ export default function Home() {
 
   const loggedInEmail = useMemo(() => session?.user?.email ?? "", [session]);
 
-  const loadMyImages = useCallback(async () => {
+  const loadMyImages = useCallback(async (currentUserId: string) => {
     if (!supabase) {
       return;
     }
 
     setIsLoadingMyImages(true);
-    const { data, error } = await supabase
-      .from("images")
-      .select("id, filename_prefix, status, created_at")
-      .order("created_at", { ascending: false })
-      .limit(100);
+    try {
+      const storageBases = new Map<string, string>();
+      let offset = 0;
 
-    if (!error && data) {
-      setMyImages(data as MyImageRow[]);
+      while (true) {
+        const { data: pageData, error: listError } = await supabase.storage
+          .from("portraits-converted")
+          .list(currentUserId, {
+            limit: STORAGE_LIST_PAGE_SIZE,
+            offset,
+            sortBy: { column: "name", order: "asc" },
+          });
+
+        if (listError) {
+          throw new Error(`Failed to load storage uploads: ${listError.message}`);
+        }
+
+        const page = pageData ?? [];
+        for (const entry of page) {
+          const base = extractConvertedBaseFromStorageName(entry.name ?? "");
+          if (!base) {
+            continue;
+          }
+
+          const ts = entry.updated_at ?? entry.created_at ?? new Date().toISOString();
+          const prev = storageBases.get(base);
+          if (!prev || prev < ts) {
+            storageBases.set(base, ts);
+          }
+        }
+
+        if (page.length < STORAGE_LIST_PAGE_SIZE) {
+          break;
+        }
+
+        offset += STORAGE_LIST_PAGE_SIZE;
+        if (offset > 10000) {
+          break;
+        }
+      }
+
+      const bases = Array.from(storageBases.keys());
+      if (bases.length === 0) {
+        setMyImages([]);
+        return;
+      }
+
+      const { data: dbRows, error: dbError } = await supabase
+        .from("images")
+        .select("id, converted_path, filename_prefix, status, created_at")
+        .in("converted_path", bases)
+        .limit(1000);
+
+      if (dbError) {
+        throw new Error(`Failed to load image metadata: ${dbError.message}`);
+      }
+
+      const dbMetaByBase = new Map<string, DbImageMetaRow>();
+      for (const row of (dbRows ?? []) as DbImageMetaRow[]) {
+        if (row.converted_path) {
+          dbMetaByBase.set(row.converted_path, row);
+        }
+      }
+
+      const rows = bases
+        .map((base): MyImageRow => {
+          const dbMeta = dbMetaByBase.get(base);
+          const fallbackPrefix = base.split("/").pop() ?? "storage-only";
+          return {
+            id: dbMeta?.id ?? `storage:${base}`,
+            filename_prefix: dbMeta?.filename_prefix ?? fallbackPrefix,
+            status: dbMeta?.status ?? "ready",
+            created_at: dbMeta?.created_at ?? storageBases.get(base) ?? new Date().toISOString(),
+          };
+        })
+        .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+        .slice(0, 100);
+
+      setMyImages(rows);
+    } catch {
+      setMyImages([]);
     }
     setIsLoadingMyImages(false);
   }, [supabase]);
@@ -134,7 +228,7 @@ export default function Home() {
       return;
     }
 
-    await loadMyImages();
+    await loadMyImages(currentUserId);
   }, [loadMyImages]);
 
   useEffect(() => {
@@ -325,7 +419,7 @@ export default function Home() {
       setLastFilenamePrefix(data.filenamePrefix);
       setStatusMessage(`${isPng ? "PNG" : "JPG"} converted to 5 TGAs and saved for ${data.imageId}.`);
       setSelectedFile(null);
-      await loadMyImages();
+      await loadMyImages(session.user.id);
     } catch (error) {
       setIsError(true);
       setStatusMessage(
@@ -430,6 +524,12 @@ export default function Home() {
   };
 
   const handleDeleteImage = async (image: MyImageRow) => {
+        if (!isUuidLike(image.id)) {
+          setIsError(true);
+          setStatusMessage("This item exists in storage only and has no DB row id to delete by. Run reconcile first.");
+          return;
+        }
+
     if (!supabase) {
       setIsError(true);
       setStatusMessage("Missing Supabase environment configuration.");
@@ -461,7 +561,9 @@ export default function Home() {
         throw new Error(error?.message ?? "Failed to delete image");
       }
 
-      await loadMyImages();
+      if (session?.user?.id) {
+        await loadMyImages(session.user.id);
+      }
       setStatusMessage(`Deleted ${image.filename_prefix}.`);
     } catch (error) {
       setIsError(true);
