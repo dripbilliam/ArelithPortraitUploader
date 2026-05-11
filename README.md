@@ -9,7 +9,7 @@ A minimal Next.js app now lives in `web/`.
 It supports:
 
 - Email/password auth with Supabase Auth
-- Uploading JPG/JPEG files through `create-upload-url`
+- Uploading JPG/JPEG files through `create-upload-url` (PNG is auto-converted client-side)
 - Optional user-provided filename prefix (legacy parity)
 - Converting JPG/JPEG -> 5 NWN TGA files client-side in browser
 - Finalizing conversion row through `finalize-client-conversion`

@@ -41,6 +41,40 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function convertPngFileToJpeg(file: File): Promise<File> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Could not create canvas context for PNG conversion");
+    }
+
+    // Fill alpha with black so transparent PNGs remain game-friendly.
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0);
+
+    const jpegBlob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          reject(new Error("Failed to encode PNG as JPG"));
+          return;
+        }
+        resolve(blob);
+      }, "image/jpeg", 0.92);
+    });
+
+    const baseName = file.name.replace(/\.[^/.]+$/, "");
+    return new File([jpegBlob], `${baseName}.jpg`, { type: "image/jpeg" });
+  } finally {
+    bitmap.close();
+  }
+}
+
 export default function Home() {
   const supabase = useMemo(() => getSupabaseClient(), []);
   const isConfigured = Boolean(supabase);
@@ -165,9 +199,17 @@ export default function Home() {
     }
 
     const fileType = selectedFile.type.toLowerCase();
-    if (fileType !== "image/jpeg" && fileType !== "image/jpg") {
+    const lowerName = selectedFile.name.toLowerCase();
+    const isPng = fileType === "image/png" || lowerName.endsWith(".png");
+    const isJpeg =
+      fileType === "image/jpeg" ||
+      fileType === "image/jpg" ||
+      lowerName.endsWith(".jpg") ||
+      lowerName.endsWith(".jpeg");
+
+    if (!isJpeg && !isPng) {
       setIsError(true);
-      setStatusMessage("Only JPG/JPEG files are allowed.");
+      setStatusMessage("Only JPG/JPEG or PNG files are allowed.");
       return;
     }
 
@@ -179,15 +221,27 @@ export default function Home() {
 
     setIsWorking(true);
     setIsError(false);
-    setStatusMessage("Creating upload URL...");
+    setStatusMessage("Preparing upload...");
 
     try {
+      let uploadSourceFile = selectedFile;
+      if (isPng) {
+        setStatusMessage("Converting PNG to JPG...");
+        uploadSourceFile = await convertPngFileToJpeg(selectedFile);
+      }
+
+      if (uploadSourceFile.size > 25 * 1024 * 1024) {
+        throw new Error("Converted JPG exceeds max size of 25 MiB.");
+      }
+
+      setStatusMessage("Creating upload URL...");
+
       const { data, error } = await supabase.functions.invoke<UploadResponse>(
         "create-upload-url",
         {
           body: {
-            filename: selectedFile.name,
-            sourceMime: selectedFile.type || "application/octet-stream",
+            filename: uploadSourceFile.name,
+            sourceMime: uploadSourceFile.type || "application/octet-stream",
             filenamePrefix: filenamePrefixInput,
           },
         },
@@ -199,7 +253,7 @@ export default function Home() {
 
       setStatusMessage(`Building TGA variants in browser...`);
 
-      const variants = await convertImageToTgaVariants(selectedFile);
+      const variants = await convertImageToTgaVariants(uploadSourceFile);
       const convertedPathBase = `${session.user.id}/${data.imageId}`;
 
       for (const variant of variants) {
@@ -233,7 +287,7 @@ export default function Home() {
       }
 
       setLastFilenamePrefix(data.filenamePrefix);
-      setStatusMessage(`JPG converted to 5 TGAs and saved for ${data.imageId}.`);
+      setStatusMessage(`${isPng ? "PNG" : "JPG"} converted to 5 TGAs and saved for ${data.imageId}.`);
       setSelectedFile(null);
     } catch (error) {
       setIsError(true);
@@ -420,7 +474,7 @@ export default function Home() {
 
         <section className="panel">
           <h2 className="title">Upload</h2>
-          <p className="lead">Limit: 25 MiB. Accepted: JPG/JPEG only.</p>
+          <p className="lead">Limit: 25 MiB. Accepted: JPG/JPEG (PNG auto-converts to JPG).</p>
 
           <form className="stack" onSubmit={handleUpload}>
             <div className="row">
@@ -440,13 +494,13 @@ export default function Home() {
                 <p className="hint">Allowed: letters, numbers, underscores. Max 15 chars for NWN compatibility.</p>
 
                 <label className="label" htmlFor="file">
-                  JPG file
+                  JPG or PNG file
                 </label>
                 <input
                   id="file"
                   className="input"
                   type="file"
-                  accept=".jpg,.jpeg,image/jpeg"
+                  accept=".jpg,.jpeg,.png,image/jpeg,image/png"
                   onChange={(event) =>
                     setSelectedFile(event.target.files?.[0] ?? null)
                   }
