@@ -97,7 +97,6 @@ Set these in Supabase dashboard or via CLI:
 
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
-- `ADMIN_DOWNLOAD_EMAILS` (comma-separated allowed emails for all-users ZIP endpoint)
 
 `SUPABASE_SERVICE_ROLE_KEY` is a reserved runtime variable in hosted Edge Functions and is not set manually with `supabase secrets set`.
 
@@ -106,7 +105,6 @@ CLI example:
 ```powershell
 supabase secrets set SUPABASE_URL=https://<your-project-ref>.supabase.co
 supabase secrets set SUPABASE_ANON_KEY=<anon-key>
-supabase secrets set ADMIN_DOWNLOAD_EMAILS=admin1@example.com,admin2@example.com
 ```
 
 ## API flow
@@ -119,6 +117,15 @@ supabase secrets set ADMIN_DOWNLOAD_EMAILS=admin1@example.com,admin2@example.com
 3. Client calls `process-image` with `imageId`, converts image, and writes output to `portraits-converted`.
 4. Function updates `images.status='ready'` and sets `converted_path`.
 5. Admin client calls `request-bulk-download` to generate and download one ZIP containing all users' images.
+
+## Anti-abuse safety net
+
+`request-bulk-download` is open to authenticated users, with built-in safeguards:
+
+- Per-user rate limit: 3 export requests per 15 minutes
+- Per-export cap: up to 1000 files scanned
+- Per-export input size cap: 200 MiB total before zipping
+- Audit logging in `public.bulk_download_audit`
 
 ## Missing piece you still need
 
