@@ -6,16 +6,6 @@ import { getSupabaseClient } from "@/lib/supabase";
 
 type TargetFormat = "png" | "jpg" | "webp";
 
-type ImageRow = {
-  id: string;
-  status: string;
-  target_format: TargetFormat;
-  original_path: string;
-  converted_path: string | null;
-  error_message: string | null;
-  created_at: string;
-};
-
 type UploadResponse = {
   imageId: string;
   objectPath: string;
@@ -30,16 +20,11 @@ type ProcessResponse = {
   targetFormat: TargetFormat;
 };
 
-type BulkFile = {
-  id: string;
-  convertedPath: string;
-  targetFormat: string;
-  createdAt: string;
-  signedUrl: string | null;
-};
-
 type BulkDownloadResponse = {
-  files: BulkFile[];
+  zipPath: string;
+  signedUrl: string;
+  fileCount: number;
+  skippedCount: number;
 };
 
 export default function Home() {
@@ -56,36 +41,14 @@ export default function Home() {
   const [statusMessage, setStatusMessage] = useState("");
   const [isError, setIsError] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
-  const [images, setImages] = useState<ImageRow[]>([]);
 
   const loggedInEmail = useMemo(() => session?.user?.email ?? "", [session]);
 
-  const loadImagesForUser = useCallback(async (userId: string | null) => {
-    if (!supabase) {
-      return;
+  const loadSessionState = useCallback(async (currentUserId: string | null) => {
+    if (!currentUserId) {
+      setSelectedFile(null);
     }
-
-    if (!userId) {
-      setImages([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("images")
-      .select("id, status, target_format, original_path, converted_path, error_message, created_at")
-      .order("created_at", { ascending: false })
-      .limit(12);
-
-    if (error) {
-      setIsError(true);
-      setStatusMessage(
-        `Could not load image history: ${error.message}. Check Data API table exposure if needed.`,
-      );
-      return;
-    }
-
-    setImages((data ?? []) as ImageRow[]);
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     if (!supabase) {
@@ -96,20 +59,20 @@ export default function Home() {
       const { data } = await supabase.auth.getSession();
       const currentSession = data.session ?? null;
       setSession(currentSession);
-      await loadImagesForUser(currentSession?.user?.id ?? null);
+      await loadSessionState(currentSession?.user?.id ?? null);
     };
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, currentSession) => {
       setSession(currentSession);
-      void loadImagesForUser(currentSession?.user?.id ?? null);
+      void loadSessionState(currentSession?.user?.id ?? null);
     });
 
     void loadSession();
 
     return () => subscription.unsubscribe();
-  }, [supabase, loadImagesForUser]);
+  }, [supabase, loadSessionState]);
 
   const handleAuth = async (event: FormEvent) => {
     event.preventDefault();
@@ -250,46 +213,10 @@ export default function Home() {
 
       setStatusMessage(`Upload and conversion complete for ${data.imageId}.`);
       setSelectedFile(null);
-      await loadImagesForUser(session.user.id);
     } catch (error) {
       setIsError(true);
       setStatusMessage(
         error instanceof Error ? error.message : "Upload request failed",
-      );
-    } finally {
-      setIsWorking(false);
-    }
-  };
-
-  const handleProcessPending = async (imageId: string) => {
-    if (!supabase || !session) {
-      return;
-    }
-
-    setIsWorking(true);
-    setIsError(false);
-    setStatusMessage(`Processing image ${imageId}...`);
-
-    try {
-      const { error } = await supabase.functions.invoke<ProcessResponse>(
-        "process-image",
-        {
-          body: {
-            imageId,
-          },
-        },
-      );
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      setStatusMessage(`Image ${imageId} processed and ready.`);
-      await loadImagesForUser(session.user.id);
-    } catch (error) {
-      setIsError(true);
-      setStatusMessage(
-        error instanceof Error ? error.message : "Failed to process image",
       );
     } finally {
       setIsWorking(false);
@@ -316,24 +243,22 @@ export default function Home() {
         throw new Error(error?.message ?? "Failed to get download links");
       }
 
-      const validFiles = data.files.filter((file) => file.signedUrl);
-
-      if (validFiles.length === 0) {
-        setStatusMessage("No ready files available to download.");
+      if (!data.signedUrl) {
+        setStatusMessage("No downloadable ZIP was generated.");
         return;
       }
 
-      validFiles.forEach((file, index) => {
-        const link = document.createElement("a");
-        link.href = file.signedUrl as string;
-        link.download = file.convertedPath.split("/").pop() ?? `converted-${index}`;
-        link.rel = "noopener noreferrer";
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      });
+      const link = document.createElement("a");
+      link.href = data.signedUrl;
+      link.download = "all-images.zip";
+      link.rel = "noopener noreferrer";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
 
-      setStatusMessage(`Started ${validFiles.length} download(s).`);
+      setStatusMessage(
+        `ZIP ready (${data.fileCount} files, ${data.skippedCount} skipped). Download started.`,
+      );
     } catch (error) {
       setIsError(true);
       setStatusMessage(
@@ -479,9 +404,9 @@ export default function Home() {
         </section>
 
         <section className="panel">
-          <h2 className="title">Recent Uploads</h2>
+          <h2 className="title">Download All</h2>
           <p className="lead">
-            Ready files can be fetched and downloaded in one click.
+            Generates one ZIP containing all stored images across all users.
           </p>
 
           <button
@@ -490,43 +415,8 @@ export default function Home() {
             disabled={isWorking || !session || !isConfigured}
             onClick={handleDownloadAll}
           >
-            Download all ready files
+            Download all images (ZIP)
           </button>
-
-          <div className="list">
-            {images.length === 0 ? (
-              <p className="hint">No uploads yet.</p>
-            ) : (
-              images.map((image) => (
-                <article key={image.id} className="listItem">
-                  <p className="mono">id: {image.id}</p>
-                  <p>
-                    status: <strong>{image.status}</strong> | target: {image.target_format}
-                  </p>
-                  <p className="mono">path: {image.original_path}</p>
-                  {image.converted_path ? (
-                    <p className="mono">converted: {image.converted_path}</p>
-                  ) : null}
-                  {image.error_message ? (
-                    <p className="status error">error: {image.error_message}</p>
-                  ) : null}
-                  {image.status !== "ready" ? (
-                    <button
-                      className="button secondary"
-                      type="button"
-                      disabled={isWorking || !session || !isConfigured}
-                      onClick={() => void handleProcessPending(image.id)}
-                    >
-                      Process now
-                    </button>
-                  ) : null}
-                  <p className="hint">
-                    created: {new Date(image.created_at).toLocaleString()}
-                  </p>
-                </article>
-              ))
-            )}
-          </div>
         </section>
       </div>
     </main>

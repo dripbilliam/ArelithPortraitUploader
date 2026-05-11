@@ -12,8 +12,7 @@ It supports:
 - Uploading image files through `create-upload-url`
 - Triggering conversion through `process-image`
 - Writing upload records to `public.images`
-- Listing recent uploads for the signed-in user
-- One-click download of all `ready` converted files
+- One-click download of all stored images across all users as a ZIP
 
 ### Run frontend locally
 
@@ -98,6 +97,7 @@ Set these in Supabase dashboard or via CLI:
 
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
+- `ADMIN_DOWNLOAD_EMAILS` (comma-separated allowed emails for all-users ZIP endpoint)
 
 `SUPABASE_SERVICE_ROLE_KEY` is a reserved runtime variable in hosted Edge Functions and is not set manually with `supabase secrets set`.
 
@@ -106,6 +106,7 @@ CLI example:
 ```powershell
 supabase secrets set SUPABASE_URL=https://<your-project-ref>.supabase.co
 supabase secrets set SUPABASE_ANON_KEY=<anon-key>
+supabase secrets set ADMIN_DOWNLOAD_EMAILS=admin1@example.com,admin2@example.com
 ```
 
 ## API flow
@@ -117,7 +118,7 @@ supabase secrets set SUPABASE_ANON_KEY=<anon-key>
 2. Function returns signed upload URL for `portraits-original` bucket and inserts an `images` row.
 3. Client calls `process-image` with `imageId`, converts image, and writes output to `portraits-converted`.
 4. Function updates `images.status='ready'` and sets `converted_path`.
-5. Client calls `request-bulk-download` to get short-lived signed URLs and download all converted files.
+5. Admin client calls `request-bulk-download` to generate and download one ZIP containing all users' images.
 
 ## Missing piece you still need
 
