@@ -1,0 +1,166 @@
+:root {
+  --bg: #f5f3ea;
+  --text: #1b1f24;
+  --muted: #5a6472;
+  --panel: #fffef9;
+  --panel-border: #d8d6cc;
+  --accent: #046b58;
+  --accent-strong: #034f42;
+  --danger: #b42318;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  color: var(--text);
+  background:
+    radial-gradient(circle at 10% 0%, #e6efdc 0%, transparent 28%),
+    radial-gradient(circle at 100% 0%, #d8ecea 0%, transparent 25%),
+    var(--bg);
+  font-family: var(--font-space-grotesk), sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+}
+
+.page {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.container {
+  max-width: 880px;
+  margin: 0 auto;
+  display: grid;
+  gap: 16px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 10px 24px rgba(10, 20, 35, 0.06);
+}
+
+.title {
+  font-size: clamp(1.5rem, 3vw, 2.1rem);
+  margin-bottom: 6px;
+}
+
+.lead {
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.stack {
+  display: grid;
+  gap: 10px;
+}
+
+.label {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.input,
+.select,
+.button {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.input,
+.select {
+  background: #ffffff;
+}
+
+.button {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.button:hover {
+  background: var(--accent-strong);
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.button.secondary {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--panel-border);
+}
+
+.row {
+  display: grid;
+  gap: 10px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.status {
+  border-radius: 10px;
+  padding: 10px 12px;
+  border: 1px solid #d6d4c8;
+  background: #f6f4ea;
+  font-family: var(--font-ibm-plex-mono), monospace;
+  font-size: 0.85rem;
+}
+
+.status.error {
+  border-color: #f3c6c1;
+  background: #fff2f0;
+  color: var(--danger);
+}
+
+.list {
+  display: grid;
+  gap: 8px;
+}
+
+.listItem {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fff;
+}
+
+.mono {
+  font-family: var(--font-ibm-plex-mono), monospace;
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 768px) {
+  .row {
+    grid-template-columns: 1fr 180px;
+    align-items: end;
+  }
+}
