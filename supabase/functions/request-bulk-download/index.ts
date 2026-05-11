@@ -41,6 +41,13 @@ const MAX_TOTAL_INPUT_BYTES = 200 * 1024 * 1024;
 const RATE_LIMIT_WINDOW_MINUTES = 15;
 const RATE_LIMIT_MAX_REQUESTS = 3;
 
+function toSafePrefix(raw: string): string {
+  const normalized = raw.toLowerCase().replace(/[^a-z0-9_]/g, "_");
+  const compact = normalized.replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+  const trimmed = compact.slice(0, 15);
+  return trimmed || "portrait";
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -135,8 +142,8 @@ Deno.serve(async (req: Request) => {
 
   for (const row of imageRows) {
     const basePrefix = (row.filename_prefix && row.filename_prefix.length > 0)
-      ? row.filename_prefix
-      : row.id;
+      ? toSafePrefix(row.filename_prefix)
+      : toSafePrefix(row.id);
 
     const convertedBase =
       typeof row.converted_path === "string" && row.converted_path.length > 0

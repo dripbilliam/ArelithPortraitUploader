@@ -19,7 +19,7 @@ type UploadRequest = {
   filenamePrefix?: string;
 };
 
-const MAX_PREFIX_LENGTH = 64;
+const MAX_PREFIX_LENGTH = 15;
 
 function normalizePrefix(value: string): string {
   const lower = value.toLowerCase();
@@ -29,7 +29,7 @@ function normalizePrefix(value: string): string {
 }
 
 function makeGeneratedPrefix(): string {
-  return crypto.randomUUID().replace(/-/g, "").slice(0, MAX_PREFIX_LENGTH);
+  return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
 }
 
 Deno.serve(async (req: Request) => {
@@ -92,7 +92,7 @@ Deno.serve(async (req: Request) => {
 
   if (userRequestedPrefix.length > 0 && !normalizedRequestedPrefix) {
     return errorResponse(
-      "Filename prefix must include letters, numbers, or underscores",
+      "Filename prefix must include letters, numbers, or underscores (max 15 chars)",
       400,
     );
   }

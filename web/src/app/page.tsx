@@ -403,10 +403,10 @@ export default function Home() {
                   type="text"
                   value={filenamePrefixInput}
                   onChange={(event) => setFilenamePrefixInput(event.target.value)}
-                  maxLength={64}
+                  maxLength={15}
                   placeholder="Example: myportrait"
                 />
-                <p className="hint">Allowed: letters, numbers, underscores.</p>
+                <p className="hint">Allowed: letters, numbers, underscores. Max 15 chars for NWN compatibility.</p>
 
                 <label className="label" htmlFor="file">
                   PNG file

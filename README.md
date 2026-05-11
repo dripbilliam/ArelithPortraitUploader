@@ -53,6 +53,11 @@ The workflow will build `web/`, export static files, and publish to GitHub Pages
 
 Supabase changed defaults for Data API exposure on new projects. If the upload list fails to load from `public.images`, expose the table to API roles (`anon`, `authenticated`) and keep RLS enabled.
 
+Filename prefix notes:
+
+- Allowed characters: `a-z`, `0-9`, `_`
+- Max length: `15` characters (so files like `<prefix>H.tga` stay NWN-compatible)
+
 ## What is included
 
 - Local Supabase config (`supabase/config.toml`)
