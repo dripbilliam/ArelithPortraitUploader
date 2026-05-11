@@ -27,11 +27,15 @@ function jsonResponse(payload: unknown, status = 200): Response {
 type ImageRow = {
   id: string;
   user_id: string;
-  original_path: string;
   converted_path: string | null;
   filename_prefix: string | null;
   target_format: string;
   created_at: string;
+};
+
+type ZipCandidate = {
+  fileName: string;
+  storagePath: string;
 };
 
 const tgaSuffixes = ["H", "L", "M", "S", "T"];
@@ -42,6 +46,7 @@ const RATE_LIMIT_WINDOW_MINUTES = 15;
 const RATE_LIMIT_MAX_REQUESTS = 3;
 const EXPORT_SIGNED_URL_TTL_SECONDS = 60 * 10;
 const EXPORT_RETENTION_BUFFER_SECONDS = 60 * 5;
+const DOWNLOAD_BATCH_CONCURRENCY = 12;
 
 function toSafePrefix(raw: string): string {
   const normalized = raw.toLowerCase().replace(/[^a-z0-9_]/g, "_");
@@ -183,10 +188,8 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const zip = new JSZip();
-  let includedCount = 0;
+  const candidates: ZipCandidate[] = [];
   let skippedCount = 0;
-  let totalInputBytes = 0;
 
   for (const row of imageRows) {
     const basePrefix = (row.filename_prefix && row.filename_prefix.length > 0)
@@ -201,31 +204,58 @@ Deno.serve(async (req: Request) => {
     if (convertedBase && row.target_format === "tga") {
       for (const suffix of tgaSuffixes) {
         const tgaPath = `${convertedBase}_${suffix}.tga`;
-
-        const { data: blob, error: downloadError } = await adminClient.storage
-          .from("portraits-converted")
-          .download(tgaPath);
-
-        if (downloadError || !blob) {
-          skippedCount += 1;
-          continue;
-        }
-
-        if (totalInputBytes + blob.size > MAX_TOTAL_INPUT_BYTES) {
-          skippedCount += 1;
-          continue;
-        }
-
-        const bytes = await blob.arrayBuffer();
         const fileName = `${basePrefix}${suffix}.tga`;
-        zip.file(fileName, bytes);
-        totalInputBytes += blob.size;
-        includedCount += 1;
+        candidates.push({
+          fileName,
+          storagePath: tgaPath,
+        });
       }
       continue;
     }
 
     skippedCount += 1;
+  }
+
+  const zip = new JSZip();
+  let includedCount = 0;
+  let totalInputBytes = 0;
+
+  for (let i = 0; i < candidates.length; i += DOWNLOAD_BATCH_CONCURRENCY) {
+    if (totalInputBytes >= MAX_TOTAL_INPUT_BYTES) {
+      skippedCount += candidates.length - i;
+      break;
+    }
+
+    const chunk = candidates.slice(i, i + DOWNLOAD_BATCH_CONCURRENCY);
+    const results = await Promise.all(
+      chunk.map(async (candidate) => {
+        const { data: blob, error } = await adminClient.storage
+          .from("portraits-converted")
+          .download(candidate.storagePath);
+        return {
+          candidate,
+          blob,
+          error,
+        };
+      }),
+    );
+
+    for (const result of results) {
+      if (result.error || !result.blob) {
+        skippedCount += 1;
+        continue;
+      }
+
+      if (totalInputBytes + result.blob.size > MAX_TOTAL_INPUT_BYTES) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const bytes = await result.blob.arrayBuffer();
+      zip.file(result.candidate.fileName, bytes);
+      totalInputBytes += result.blob.size;
+      includedCount += 1;
+    }
   }
 
   if (includedCount === 0) {
