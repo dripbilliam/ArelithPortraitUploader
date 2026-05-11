@@ -13,6 +13,7 @@ It supports:
 - Optional user-provided filename prefix (legacy parity)
 - Converting JPG/JPEG -> 5 NWN TGA files client-side in browser
 - Finalizing conversion row through `finalize-client-conversion`
+- Automatic dedupe of identical TGA sets via SHA-256 hash
 - Writing upload records to `public.images`
 - One-click download of all stored images across all users as a ZIP
 
@@ -120,10 +121,11 @@ supabase secrets set SUPABASE_ANON_KEY=<anon-key>
    - `filename`
    - `sourceMime`
    - `filenamePrefix` (optional)
-2. Function returns signed upload URL for `portraits-original` bucket, stores a final `filename_prefix` (user provided or generated), and inserts an `images` row.
+2. Function stores a final `filename_prefix` (user provided or generated) and inserts an `images` row.
 3. Browser converts JPG/JPEG to NWN TGA variants (`H`, `L`, `M`, `S`, `T`) and uploads them to `portraits-converted`.
-4. Client calls `finalize-client-conversion` with `imageId` and base path to mark row `ready`.
+4. Client calls `finalize-client-conversion` with `imageId` and base path to mark row `ready`, delete the transient original path, and dedupe against existing converted sets.
 5. Client calls `request-bulk-download` to generate and download one ZIP containing all users' stored images named as `<filename_prefix><size>.tga`.
+6. Old ZIP exports are cleaned up automatically after signed-link expiry plus a small buffer.
 
 ## Anti-abuse safety net
 

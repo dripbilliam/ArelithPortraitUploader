@@ -9,8 +9,6 @@ type UploadResponse = {
   imageId: string;
   filenamePrefix: string;
   objectPath: string;
-  token: string;
-  uploadUrl: string;
 };
 
 type FinalizeResponse = {
@@ -182,24 +180,7 @@ export default function Home() {
         throw new Error(error?.message ?? "Failed to create upload URL");
       }
 
-      setStatusMessage(`Uploading to storage for image ${data.imageId}...`);
-
-      const uploadResponse = await fetch(data.uploadUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Type": selectedFile.type || "application/octet-stream",
-        },
-        body: selectedFile,
-      });
-
-      if (!uploadResponse.ok) {
-        const uploadText = await uploadResponse.text();
-        throw new Error(
-          `Upload failed (${uploadResponse.status}): ${uploadText || "unknown error"}`,
-        );
-      }
-
-      setStatusMessage(`Upload complete. Building TGA variants in browser...`);
+      setStatusMessage(`Building TGA variants in browser...`);
 
       const variants = await convertImageToTgaVariants(selectedFile);
       const convertedPathBase = `${session.user.id}/${data.imageId}`;

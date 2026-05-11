@@ -11,6 +11,55 @@ type FinalizeRequest = {
   convertedPathBase: string;
 };
 
+type ExistingImageRow = {
+  id: string;
+  converted_path: string | null;
+};
+
+const tgaSuffixes = ["H", "L", "M", "S", "T"] as const;
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function computeTgaSetSha256(
+  supabase: ReturnType<typeof createClient>,
+  convertedPathBase: string,
+): Promise<{ hash: string; uploadedPaths: string[] } | { error: Response }> {
+  const chunks: Uint8Array[] = [];
+  const uploadedPaths: string[] = [];
+
+  for (const suffix of tgaSuffixes) {
+    const tgaPath = `${convertedPathBase}_${suffix}.tga`;
+    const { data: blob, error } = await supabase.storage
+      .from("portraits-converted")
+      .download(tgaPath);
+
+    if (error || !blob) {
+      return {
+        error: errorResponse(`Missing converted file: ${tgaPath}`, 400),
+      };
+    }
+
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    chunks.push(bytes);
+    uploadedPaths.push(tgaPath);
+  }
+
+  const totalLength = chunks.reduce((sum, part) => sum + part.length, 0);
+  const merged = new Uint8Array(totalLength);
+  let offset = 0;
+
+  for (const part of chunks) {
+    merged.set(part, offset);
+    offset += part.length;
+  }
+
+  const digest = await crypto.subtle.digest("SHA-256", merged);
+  const hash = bytesToHex(new Uint8Array(digest));
+  return { hash, uploadedPaths };
+}
+
 function errorResponse(message: string, status: number): Response {
   return new Response(message, {
     status,
@@ -67,7 +116,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: row, error: rowError } = await supabase
     .from("images")
-    .select("id, user_id, status")
+    .select("id, user_id, status, original_path")
     .eq("id", body.imageId)
     .single();
 
@@ -79,12 +128,62 @@ Deno.serve(async (req: Request) => {
     return errorResponse("Forbidden", 403);
   }
 
+  const hashResult = await computeTgaSetSha256(supabase, body.convertedPathBase);
+  if ("error" in hashResult) {
+    return hashResult.error;
+  }
+
+  const { hash, uploadedPaths } = hashResult;
+
+  let finalConvertedPath = body.convertedPathBase;
+  let deduped = false;
+
+  const { data: duplicateRows, error: duplicateError } = await supabase
+    .from("images")
+    .select("id, converted_path")
+    .eq("status", "ready")
+    .eq("target_format", "tga")
+    .eq("tga_set_sha256", hash)
+    .neq("id", body.imageId)
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (duplicateError) {
+    return errorResponse(`Failed dedupe lookup: ${duplicateError.message}`, 500);
+  }
+
+  const duplicate = ((duplicateRows ?? [])[0] ?? null) as ExistingImageRow | null;
+  if (duplicate?.converted_path) {
+    finalConvertedPath = duplicate.converted_path;
+    deduped = true;
+
+    const { error: removeDuplicateFilesError } = await supabase.storage
+      .from("portraits-converted")
+      .remove(uploadedPaths);
+
+    if (
+      removeDuplicateFilesError &&
+      !removeDuplicateFilesError.message.toLowerCase().includes("not found")
+    ) {
+      return errorResponse(`Failed cleanup of duplicate files: ${removeDuplicateFilesError.message}`, 500);
+    }
+  }
+
+  const { error: removeOriginalError } = await supabase.storage
+    .from("portraits-original")
+    .remove([row.original_path]);
+
+  if (removeOriginalError && !removeOriginalError.message.toLowerCase().includes("not found")) {
+    return errorResponse(`Failed to delete original JPG: ${removeOriginalError.message}`, 500);
+  }
+
   const { error: updateError } = await supabase
     .from("images")
     .update({
       status: "ready",
-      converted_path: body.convertedPathBase,
+      converted_path: finalConvertedPath,
       target_format: "tga",
+      tga_set_sha256: hash,
       error_message: null,
     })
     .eq("id", body.imageId);
@@ -97,7 +196,8 @@ Deno.serve(async (req: Request) => {
     JSON.stringify({
       imageId: body.imageId,
       status: "ready",
-      convertedPathBase: body.convertedPathBase,
+      convertedPathBase: finalConvertedPath,
+      deduped,
     }),
     {
       headers: {

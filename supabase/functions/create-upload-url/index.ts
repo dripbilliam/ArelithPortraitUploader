@@ -99,17 +99,6 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  const { data: signedData, error: signedError } = await supabase.storage
-    .from("portraits-original")
-    .createSignedUploadUrl(objectPath);
-
-  if (signedError || !signedData) {
-    return errorResponse(
-      `Failed to create upload URL: ${signedError?.message ?? "unknown"}`,
-      500,
-    );
-  }
-
   let imageRow: { id: string; original_path: string; status: string; filename_prefix: string } | null = null;
   let insertError: { message?: string; code?: string } | null = null;
   const maxInsertAttempts = 5;
@@ -158,8 +147,6 @@ Deno.serve(async (req: Request) => {
       imageId: imageRow.id,
       filenamePrefix: imageRow.filename_prefix,
       objectPath,
-      token: signedData.token,
-      uploadUrl: `${supabaseUrl}/storage/v1/object/upload/sign/portraits-original/${objectPath}?token=${signedData.token}`,
     }),
     {
       headers: {

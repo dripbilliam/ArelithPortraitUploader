@@ -40,12 +40,24 @@ const MAX_FILES_PER_EXPORT = 1000;
 const MAX_TOTAL_INPUT_BYTES = 200 * 1024 * 1024;
 const RATE_LIMIT_WINDOW_MINUTES = 15;
 const RATE_LIMIT_MAX_REQUESTS = 3;
+const EXPORT_SIGNED_URL_TTL_SECONDS = 60 * 10;
+const EXPORT_RETENTION_BUFFER_SECONDS = 60 * 5;
 
 function toSafePrefix(raw: string): string {
   const normalized = raw.toLowerCase().replace(/[^a-z0-9_]/g, "_");
   const compact = normalized.replace(/_+/g, "_").replace(/^_+|_+$/g, "");
   const trimmed = compact.slice(0, 15);
   return trimmed || "portrait";
+}
+
+function parseExportTimestampMs(pathName: string): number | null {
+  const match = pathName.match(/all-users-(\d+)\.zip$/);
+  if (!match) {
+    return null;
+  }
+
+  const ts = Number(match[1]);
+  return Number.isFinite(ts) ? ts : null;
 }
 
 Deno.serve(async (req: Request) => {
@@ -116,9 +128,45 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  const now = Date.now();
+  const maxZipAgeMs = (EXPORT_SIGNED_URL_TTL_SECONDS + EXPORT_RETENTION_BUFFER_SECONDS) * 1000;
+  const { data: existingExports, error: listExportsError } = await adminClient.storage
+    .from("bulk-exports")
+    .list("exports", { limit: 1000, offset: 0, sortBy: { column: "name", order: "asc" } });
+
+  if (listExportsError) {
+    return errorResponse(`Failed to list prior ZIP exports: ${listExportsError.message}`, 500);
+  }
+
+  const pathsToDelete = (existingExports ?? [])
+    .map((entry) => {
+      const ts = parseExportTimestampMs(entry.name ?? "");
+      if (ts === null) {
+        return null;
+      }
+
+      const age = now - ts;
+      if (age <= maxZipAgeMs) {
+        return null;
+      }
+
+      return `exports/${entry.name}`;
+    })
+    .filter((path): path is string => typeof path === "string");
+
+  if (pathsToDelete.length > 0) {
+    const { error: cleanupError } = await adminClient.storage
+      .from("bulk-exports")
+      .remove(pathsToDelete);
+
+    if (cleanupError) {
+      return errorResponse(`Failed to clean up prior ZIP exports: ${cleanupError.message}`, 500);
+    }
+  }
+
   const { data: rows, error: rowsError } = await adminClient
     .from("images")
-    .select("id, user_id, original_path, converted_path, filename_prefix, target_format, created_at")
+    .select("id, user_id, converted_path, filename_prefix, target_format, created_at")
     .order("created_at", { ascending: false })
     .limit(MAX_FILES_PER_EXPORT);
 
@@ -177,25 +225,7 @@ Deno.serve(async (req: Request) => {
       continue;
     }
 
-    const { data: originalBlob, error: originalError } = await adminClient.storage
-      .from("portraits-original")
-      .download(row.original_path);
-
-    if (originalError || !originalBlob) {
-      skippedCount += 1;
-      continue;
-    }
-
-    if (totalInputBytes + originalBlob.size > MAX_TOTAL_INPUT_BYTES) {
-      skippedCount += 1;
-      continue;
-    }
-
-    const originalBytes = await originalBlob.arrayBuffer();
-    const originalName = row.original_path.split("/").pop() ?? `${row.id}_original.png`;
-    zip.file(`${basePrefix}_${originalName}`, originalBytes);
-    totalInputBytes += originalBlob.size;
-    includedCount += 1;
+    skippedCount += 1;
   }
 
   if (includedCount === 0) {
@@ -243,7 +273,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: signedData, error: signedError } = await adminClient.storage
     .from("bulk-exports")
-    .createSignedUrl(exportPath, 60 * 10);
+    .createSignedUrl(exportPath, EXPORT_SIGNED_URL_TTL_SECONDS);
 
   if (signedError || !signedData?.signedUrl) {
     await adminClient.from("bulk_download_audit").insert({
