@@ -14,6 +14,7 @@ It supports:
 - Converting JPG/JPEG -> 5 NWN TGA files client-side in browser
 - Finalizing conversion row through `finalize-client-conversion`
 - Automatic dedupe of identical TGA sets via SHA-256 hash
+- Signed-in users can view and delete their uploaded images
 - Writing upload records to `public.images`
 - One-click download of all stored images across all users as a ZIP
 - Download queue available without sign-in (subject to rate limits and bans)
@@ -67,6 +68,7 @@ Filename prefix notes:
 - Initial SQL migration (`supabase/migrations/202605100001_initial_schema.sql`)
 - Edge function to issue signed upload URL (`create-upload-url`)
 - Edge function to finalize client-side conversion (`finalize-client-conversion`)
+- Edge function to delete user-owned images (`delete-image`)
 - Edge function to issue signed bulk download URLs (`request-bulk-download`)
 - Edge function worker to process queued bulk exports (`process-bulk-download-job`)
 - Edge function to poll bulk export job status (`get-bulk-download-job`)

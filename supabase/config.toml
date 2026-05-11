@@ -48,3 +48,6 @@ verify_jwt = true
 
 [functions.finalize-client-conversion]
 verify_jwt = true
+
+[functions.delete-image]
+verify_jwt = true

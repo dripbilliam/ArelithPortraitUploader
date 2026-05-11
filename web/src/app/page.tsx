@@ -17,6 +17,18 @@ type FinalizeResponse = {
   convertedPathBase: string;
 };
 
+type MyImageRow = {
+  id: string;
+  filename_prefix: string;
+  status: "uploaded" | "processing" | "ready" | "failed";
+  created_at: string;
+};
+
+type DeleteImageResponse = {
+  imageId: string;
+  deleted: boolean;
+};
+
 type BulkDownloadResponse = {
   jobId: string;
   status: "queued" | "processing" | "ready" | "failed";
@@ -87,19 +99,43 @@ export default function Home() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filenamePrefixInput, setFilenamePrefixInput] = useState("");
   const [lastFilenamePrefix, setLastFilenamePrefix] = useState("");
+  const [myImages, setMyImages] = useState<MyImageRow[]>([]);
+  const [isLoadingMyImages, setIsLoadingMyImages] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [isError, setIsError] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
 
   const loggedInEmail = useMemo(() => session?.user?.email ?? "", [session]);
 
+  const loadMyImages = useCallback(async () => {
+    if (!supabase) {
+      return;
+    }
+
+    setIsLoadingMyImages(true);
+    const { data, error } = await supabase
+      .from("images")
+      .select("id, filename_prefix, status, created_at")
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (!error && data) {
+      setMyImages(data as MyImageRow[]);
+    }
+    setIsLoadingMyImages(false);
+  }, [supabase]);
+
   const loadSessionState = useCallback(async (currentUserId: string | null) => {
     if (!currentUserId) {
       setSelectedFile(null);
       setFilenamePrefixInput("");
       setLastFilenamePrefix("");
+      setMyImages([]);
+      return;
     }
-  }, []);
+
+    await loadMyImages();
+  }, [loadMyImages]);
 
   useEffect(() => {
     if (!supabase) {
@@ -289,6 +325,7 @@ export default function Home() {
       setLastFilenamePrefix(data.filenamePrefix);
       setStatusMessage(`${isPng ? "PNG" : "JPG"} converted to 5 TGAs and saved for ${data.imageId}.`);
       setSelectedFile(null);
+      await loadMyImages();
     } catch (error) {
       setIsError(true);
       setStatusMessage(
@@ -387,6 +424,48 @@ export default function Home() {
       setStatusMessage(
         error instanceof Error ? error.message : "Download request failed",
       );
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
+  const handleDeleteImage = async (image: MyImageRow) => {
+    if (!supabase) {
+      setIsError(true);
+      setStatusMessage("Missing Supabase environment configuration.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete image prefix ${image.filename_prefix}? This cannot be undone.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setIsWorking(true);
+    setIsError(false);
+    setStatusMessage(`Deleting ${image.filename_prefix}...`);
+
+    try {
+      const { data, error } = await supabase.functions.invoke<DeleteImageResponse>(
+        "delete-image",
+        {
+          body: {
+            imageId: image.id,
+          },
+        },
+      );
+
+      if (error || !data?.deleted) {
+        throw new Error(error?.message ?? "Failed to delete image");
+      }
+
+      await loadMyImages();
+      setStatusMessage(`Deleted ${image.filename_prefix}.`);
+    } catch (error) {
+      setIsError(true);
+      setStatusMessage(error instanceof Error ? error.message : "Delete failed");
     } finally {
       setIsWorking(false);
     }
@@ -553,6 +632,38 @@ export default function Home() {
             Download all images (ZIP)
           </button>
         </section>
+
+        {session ? (
+          <section className="panel">
+            <h2 className="title">Your Uploads</h2>
+            <p className="lead">Review and remove images uploaded by your account.</p>
+
+            {isLoadingMyImages ? (
+              <p className="hint">Loading your images...</p>
+            ) : myImages.length === 0 ? (
+              <p className="hint">No images uploaded yet.</p>
+            ) : (
+              <div className="stack">
+                {myImages.map((image) => (
+                  <div key={image.id} className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: "0.75rem" }}>
+                    <div className="stack" style={{ gap: "0.15rem" }}>
+                      <p className="hint"><code className="mono">{image.filename_prefix}</code> - {image.status}</p>
+                      <p className="hint">Uploaded {new Date(image.created_at).toLocaleString()}</p>
+                    </div>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      disabled={isWorking}
+                      onClick={() => handleDeleteImage(image)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
       </div>
     </main>
   );
