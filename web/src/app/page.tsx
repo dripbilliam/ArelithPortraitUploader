@@ -20,6 +20,7 @@ type FinalizeResponse = {
 type BulkDownloadResponse = {
   jobId: string;
   status: "queued" | "processing" | "ready" | "failed";
+  accessToken: string;
   reused?: boolean;
 };
 
@@ -260,9 +261,9 @@ export default function Home() {
   };
 
   const handleDownloadAll = async () => {
-    if (!supabase || !session) {
+    if (!supabase) {
       setIsError(true);
-      setStatusMessage("Sign in before downloading.");
+      setStatusMessage("Missing Supabase environment configuration.");
       return;
     }
 
@@ -286,6 +287,7 @@ export default function Home() {
           {
             body: {
               jobId: data.jobId,
+              accessToken: data.accessToken,
             },
           },
         );
@@ -491,7 +493,7 @@ export default function Home() {
           <button
             className="button"
             type="button"
-            disabled={isWorking || !session || !isConfigured}
+            disabled={isWorking || !isConfigured}
             onClick={handleDownloadAll}
           >
             Download all images (ZIP)

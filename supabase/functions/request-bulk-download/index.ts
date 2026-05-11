@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkApiBan, resolveIdentity } from "../_shared/moderation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -42,10 +43,6 @@ Deno.serve(async (req: Request) => {
 
   const authHeader = req.headers.get("Authorization") ?? "";
   const apikeyHeader = req.headers.get("apikey") ?? supabaseAnonKey;
-  const requesterIp = (req.headers.get("x-forwarded-for") ?? "")
-    .split(",")[0]
-    .trim() || "unknown";
-
   const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     global: {
       headers: {
@@ -55,17 +52,19 @@ Deno.serve(async (req: Request) => {
   });
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
-  const { data: userData, error: userError } = await supabase.auth.getUser();
-  if (userError || !userData.user) {
-    return errorResponse("Unauthorized", 401);
+  const identity = await resolveIdentity(supabase, req);
+  const banResult = await checkApiBan(adminClient, identity, "download");
+  if (banResult.error) {
+    return errorResponse(`Failed to evaluate download ban policy: ${banResult.error}`, 500);
   }
-
-  const userId = userData.user.id;
+  if (banResult.blocked) {
+    return errorResponse(`Access denied: ${banResult.reason ?? "download blocked"}`, 403);
+  }
 
   const existingJobQuery = await adminClient
     .from("bulk_export_jobs")
-    .select("id, status, created_at")
-    .eq("user_id", userId)
+    .select("id, status, access_token, created_at")
+    .eq("requester_key", identity.requesterKey)
     .in("status", ["queued", "processing"])
     .order("created_at", { ascending: false })
     .limit(1);
@@ -79,17 +78,20 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({
       jobId: existingJob.id,
       status: existingJob.status,
+      accessToken: existingJob.access_token,
       reused: true,
     });
   }
 
-  const { data: createdJob, error: createJobError } = await supabase
+  const { data: createdJob, error: createJobError } = await adminClient
     .from("bulk_export_jobs")
     .insert({
-      user_id: userId,
+      user_id: identity.userId,
+      requester_key: identity.requesterKey,
+      requester_ip: identity.requesterIp,
       status: "queued",
     })
-    .select("id, status")
+    .select("id, status, access_token")
     .single();
 
   if (createJobError || !createdJob) {
@@ -104,14 +106,15 @@ Deno.serve(async (req: Request) => {
           "Content-Type": "application/json",
           apikey: apikeyHeader,
           Authorization: authHeader,
-          "x-forwarded-for": requesterIp,
+          "x-forwarded-for": identity.requesterIp,
         },
         body: JSON.stringify({
           jobId: createdJob.id,
+          accessToken: createdJob.access_token,
         }),
       });
     } catch {
-      // The job stays queued; client polling can trigger retry paths later.
+      // Job remains queued if trigger fails.
     }
   };
 
@@ -125,6 +128,7 @@ Deno.serve(async (req: Request) => {
   return jsonResponse({
     jobId: createdJob.id,
     status: createdJob.status,
+    accessToken: createdJob.access_token,
     reused: false,
   });
 });

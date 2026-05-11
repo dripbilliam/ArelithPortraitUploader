@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { Image } from "https://deno.land/x/imagescript@1.3.0/mod.ts";
+import { checkApiBan, resolveIdentity } from "../_shared/moderation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -59,6 +60,14 @@ Deno.serve(async (req: Request) => {
   });
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
+  const identity = await resolveIdentity(userClient, req);
+  const banResult = await checkApiBan(adminClient, identity, "upload");
+  if (banResult.error) {
+    return errorResponse(`Failed to evaluate upload ban policy: ${banResult.error}`, 500);
+  }
+  if (banResult.blocked) {
+    return errorResponse(`Access denied: ${banResult.reason ?? "upload blocked"}`, 403);
+  }
 
   const { data: userData, error: userError } = await userClient.auth.getUser();
   if (userError || !userData.user) {

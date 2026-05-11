@@ -35,13 +35,13 @@ enable_signup = true
 verify_jwt = true
 
 [functions.request-bulk-download]
-verify_jwt = true
+verify_jwt = false
 
 [functions.process-bulk-download-job]
-verify_jwt = true
+verify_jwt = false
 
 [functions.get-bulk-download-job]
-verify_jwt = true
+verify_jwt = false
 
 [functions.process-image]
 verify_jwt = true

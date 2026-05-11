@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkApiBan, resolveIdentity } from "../_shared/moderation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -45,8 +46,9 @@ Deno.serve(async (req: Request) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-  if (!supabaseUrl || !supabaseAnonKey) {
+  if (!supabaseUrl || !supabaseAnonKey || !serviceRoleKey) {
     return errorResponse("Missing Supabase env", 500);
   }
 
@@ -59,6 +61,16 @@ Deno.serve(async (req: Request) => {
       },
     },
   });
+  const adminClient = createClient(supabaseUrl, serviceRoleKey);
+
+  const identity = await resolveIdentity(supabase, req);
+  const banResult = await checkApiBan(adminClient, identity, "upload");
+  if (banResult.error) {
+    return errorResponse(`Failed to evaluate upload ban policy: ${banResult.error}`, 500);
+  }
+  if (banResult.blocked) {
+    return errorResponse(`Access denied: ${banResult.reason ?? "upload blocked"}`, 403);
+  }
 
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError || !userData.user) {
@@ -112,6 +124,7 @@ Deno.serve(async (req: Request) => {
         user_id: userData.user.id,
         original_path: objectPath,
         source_mime: sourceMime,
+        uploader_ip: identity.requesterIp,
         target_format: "tga",
         filename_prefix: candidatePrefix,
         status: "uploaded",

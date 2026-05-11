@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkApiBan, resolveIdentity } from "../_shared/moderation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,6 +26,7 @@ function jsonResponse(payload: unknown, status = 200): Response {
 
 type StatusRequest = {
   jobId: string;
+  accessToken: string;
 };
 
 const EXPORT_SIGNED_URL_TTL_SECONDS = 60 * 10;
@@ -57,9 +59,13 @@ Deno.serve(async (req: Request) => {
   });
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
-  const { data: userData, error: userError } = await supabase.auth.getUser();
-  if (userError || !userData.user) {
-    return errorResponse("Unauthorized", 401);
+  const identity = await resolveIdentity(supabase, req);
+  const banResult = await checkApiBan(adminClient, identity, "download");
+  if (banResult.error) {
+    return errorResponse(`Failed to evaluate download ban policy: ${banResult.error}`, 500);
+  }
+  if (banResult.blocked) {
+    return errorResponse(`Access denied: ${banResult.reason ?? "download blocked"}`, 403);
   }
 
   let body: StatusRequest;
@@ -69,15 +75,16 @@ Deno.serve(async (req: Request) => {
     return errorResponse("Invalid JSON", 400);
   }
 
-  if (!body.jobId) {
+  if (!body.jobId || !body.accessToken) {
     return errorResponse("Missing required fields", 400);
   }
 
   const { data: job, error: jobError } = await adminClient
     .from("bulk_export_jobs")
-    .select("id, user_id, status, file_count, skipped_count, zip_path, error_message, created_at, updated_at, started_at, finished_at")
+    .select("id, requester_key, status, file_count, skipped_count, zip_path, error_message, created_at, updated_at, started_at, finished_at")
     .eq("id", body.jobId)
-    .eq("user_id", userData.user.id)
+    .eq("requester_key", identity.requesterKey)
+    .eq("access_token", body.accessToken)
     .single();
 
   if (jobError || !job) {

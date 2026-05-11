@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import JSZip from "https://esm.sh/jszip@3.10.1";
+import { checkApiBan, resolveIdentity } from "../_shared/moderation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,6 +41,7 @@ type ZipCandidate = {
 
 type ProcessRequest = {
   jobId: string;
+  accessToken: string;
 };
 
 const tgaSuffixes = ["H", "L", "M", "S", "T"];
@@ -87,9 +89,6 @@ Deno.serve(async (req: Request) => {
   }
 
   const authHeader = req.headers.get("Authorization") ?? "";
-  const requesterIp = (req.headers.get("x-forwarded-for") ?? "")
-    .split(",")[0]
-    .trim() || "unknown";
 
   const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     global: {
@@ -100,9 +99,13 @@ Deno.serve(async (req: Request) => {
   });
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
-  const { data: userData, error: userError } = await supabase.auth.getUser();
-  if (userError || !userData.user) {
-    return errorResponse("Unauthorized", 401);
+  const identity = await resolveIdentity(supabase, req);
+  const banResult = await checkApiBan(adminClient, identity, "download");
+  if (banResult.error) {
+    return errorResponse(`Failed to evaluate download ban policy: ${banResult.error}`, 500);
+  }
+  if (banResult.blocked) {
+    return errorResponse(`Access denied: ${banResult.reason ?? "download blocked"}`, 403);
   }
 
   let body: ProcessRequest;
@@ -112,33 +115,33 @@ Deno.serve(async (req: Request) => {
     return errorResponse("Invalid JSON", 400);
   }
 
-  if (!body.jobId) {
+  if (!body.jobId || !body.accessToken) {
     return errorResponse("Missing required fields", 400);
   }
 
-  const userId = userData.user.id;
   const windowStartIso = new Date(Date.now() - RATE_LIMIT_WINDOW_MINUTES * 60 * 1000).toISOString();
 
-  const { count: userWindowCount, error: rateError } = await adminClient
+  const { count: requesterWindowCount, error: rateError } = await adminClient
     .from("bulk_download_audit")
     .select("id", { count: "exact", head: true })
-    .eq("user_id", userId)
+    .eq("requester_key", identity.requesterKey)
     .gte("created_at", windowStartIso);
 
   if (rateError) {
     return errorResponse(`Rate limit check failed: ${rateError.message}`, 500);
   }
 
-  if ((userWindowCount ?? 0) >= RATE_LIMIT_MAX_REQUESTS) {
+  if ((requesterWindowCount ?? 0) >= RATE_LIMIT_MAX_REQUESTS) {
     await adminClient.from("bulk_export_jobs").update({
       status: "failed",
       error_message: `Too many requests. Try again in about ${RATE_LIMIT_WINDOW_MINUTES} minutes.`,
       finished_at: new Date().toISOString(),
-    }).eq("id", body.jobId).eq("user_id", userId);
+    }).eq("id", body.jobId).eq("requester_key", identity.requesterKey).eq("access_token", body.accessToken);
 
     await adminClient.from("bulk_download_audit").insert({
-      user_id: userId,
-      requester_ip: requesterIp,
+      user_id: identity.userId,
+      requester_key: identity.requesterKey,
+      requester_ip: identity.requesterIp,
       status: "rate_limited",
       error_message: "Too many export requests in time window",
     });
@@ -185,9 +188,10 @@ Deno.serve(async (req: Request) => {
       zip_path: null,
     })
     .eq("id", body.jobId)
-    .eq("user_id", userId)
+    .eq("requester_key", identity.requesterKey)
+    .eq("access_token", body.accessToken)
     .eq("status", "queued")
-    .select("id, user_id")
+    .select("id")
     .limit(1);
 
   if (claimError) {
@@ -197,9 +201,10 @@ Deno.serve(async (req: Request) => {
   if (!claimedRows || claimedRows.length === 0) {
     const { data: existingJob, error: jobReadError } = await adminClient
       .from("bulk_export_jobs")
-      .select("id, user_id, status, file_count, skipped_count, zip_path, error_message")
+      .select("id, status, file_count, skipped_count, zip_path, error_message")
       .eq("id", body.jobId)
-      .eq("user_id", userId)
+      .eq("requester_key", identity.requesterKey)
+      .eq("access_token", body.accessToken)
       .single();
 
     if (jobReadError || !existingJob) {
@@ -308,8 +313,9 @@ Deno.serve(async (req: Request) => {
     }).eq("id", body.jobId);
 
     await adminClient.from("bulk_download_audit").insert({
-      user_id: userId,
-      requester_ip: requesterIp,
+      user_id: identity.userId,
+      requester_key: identity.requesterKey,
+      requester_ip: identity.requesterIp,
       status: "failed",
       file_count: 0,
       skipped_count: skippedCount,
@@ -343,8 +349,9 @@ Deno.serve(async (req: Request) => {
     }).eq("id", body.jobId);
 
     await adminClient.from("bulk_download_audit").insert({
-      user_id: userId,
-      requester_ip: requesterIp,
+      user_id: identity.userId,
+      requester_key: identity.requesterKey,
+      requester_ip: identity.requesterIp,
       status: "failed",
       file_count: includedCount,
       skipped_count: skippedCount,
@@ -365,8 +372,9 @@ Deno.serve(async (req: Request) => {
   }).eq("id", body.jobId);
 
   await adminClient.from("bulk_download_audit").insert({
-    user_id: userId,
-    requester_ip: requesterIp,
+    user_id: identity.userId,
+    requester_key: identity.requesterKey,
+    requester_ip: identity.requesterIp,
     status: "ok",
     file_count: includedCount,
     skipped_count: skippedCount,

@@ -16,6 +16,8 @@ It supports:
 - Automatic dedupe of identical TGA sets via SHA-256 hash
 - Writing upload records to `public.images`
 - One-click download of all stored images across all users as a ZIP
+- Download queue available without sign-in (subject to rate limits and bans)
+- Central moderation bans by IP/email/user_id for upload/download/any API access
 
 ### Run frontend locally
 
@@ -68,6 +70,7 @@ Filename prefix notes:
 - Edge function to issue signed bulk download URLs (`request-bulk-download`)
 - Edge function worker to process queued bulk exports (`process-bulk-download-job`)
 - Edge function to poll bulk export job status (`get-bulk-download-job`)
+- SQL moderation toolkit (`scripts/admin_moderation.sql`)
 
 ## Prerequisites
 
@@ -141,6 +144,7 @@ supabase secrets set SUPABASE_ANON_KEY=<anon-key>
 - Per-export cap: up to 1000 files scanned
 - Per-export input size cap: 200 MiB total before zipping
 - Audit logging in `public.bulk_download_audit`
+- Global API moderation bans in `public.api_access_bans` (IP/email/user_id, per-scope)
 
 ## Missing piece you still need
 
