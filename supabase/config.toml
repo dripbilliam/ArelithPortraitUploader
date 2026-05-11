@@ -39,3 +39,6 @@ verify_jwt = true
 
 [functions.process-image]
 verify_jwt = true
+
+[functions.finalize-client-conversion]
+verify_jwt = true

@@ -9,8 +9,9 @@ A minimal Next.js app now lives in `web/`.
 It supports:
 
 - Email/password auth with Supabase Auth
-- Uploading image files through `create-upload-url`
-- Triggering conversion through `process-image`
+- Uploading PNG files through `create-upload-url`
+- Converting PNG -> 5 NWN TGA files client-side in browser
+- Finalizing conversion row through `finalize-client-conversion`
 - Writing upload records to `public.images`
 - One-click download of all stored images across all users as a ZIP
 
@@ -56,7 +57,7 @@ Supabase changed defaults for Data API exposure on new projects. If the upload l
 - Local Supabase config (`supabase/config.toml`)
 - Initial SQL migration (`supabase/migrations/202605100001_initial_schema.sql`)
 - Edge function to issue signed upload URL (`create-upload-url`)
-- Edge function to convert uploaded files (`process-image`)
+- Edge function to finalize client-side conversion (`finalize-client-conversion`)
 - Edge function to issue signed bulk download URLs (`request-bulk-download`)
 
 ## Prerequisites
@@ -87,7 +88,7 @@ supabase login
 supabase link --project-ref <your-project-ref>
 supabase db push
 supabase functions deploy create-upload-url
-supabase functions deploy process-image
+supabase functions deploy finalize-client-conversion
 supabase functions deploy request-bulk-download
 ```
 
@@ -112,11 +113,10 @@ supabase secrets set SUPABASE_ANON_KEY=<anon-key>
 1. Authenticated client calls `create-upload-url` with:
    - `filename`
    - `sourceMime`
-   - `targetFormat` (`png` | `jpg` | `webp`)
 2. Function returns signed upload URL for `portraits-original` bucket and inserts an `images` row.
-3. Client calls `process-image` with `imageId`, converts image, and writes output to `portraits-converted`.
-4. Function updates `images.status='ready'` and sets `converted_path`.
-5. Admin client calls `request-bulk-download` to generate and download one ZIP containing all users' images.
+3. Browser converts PNG to NWN TGA variants (`H`, `L`, `M`, `S`, `T`) and uploads them to `portraits-converted`.
+4. Client calls `finalize-client-conversion` with `imageId` and base path to mark row `ready`.
+5. Client calls `request-bulk-download` to generate and download one ZIP containing all users' stored images.
 
 ## Anti-abuse safety net
 
@@ -129,8 +129,8 @@ supabase secrets set SUPABASE_ANON_KEY=<anon-key>
 
 ## Missing piece you still need
 
-Current conversion runs one image per function call and is good for starting quickly.
-For heavier production load, migrate conversion to an async queue/worker.
+Current conversion runs in the browser for low infra cost and easy scaling.
+For heavier production load or stricter trust boundaries, migrate conversion to a backend worker.
 
 Recommended options:
 

@@ -3,8 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase";
-
-type TargetFormat = "png" | "jpg" | "webp";
+import { convertPngToTgaVariants } from "@/lib/tga";
 
 type UploadResponse = {
   imageId: string;
@@ -13,11 +12,10 @@ type UploadResponse = {
   uploadUrl: string;
 };
 
-type ProcessResponse = {
+type FinalizeResponse = {
   imageId: string;
   status: "ready";
-  convertedPath: string;
-  targetFormat: TargetFormat;
+  convertedPathBase: string;
 };
 
 type BulkDownloadResponse = {
@@ -37,7 +35,6 @@ export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [targetFormat, setTargetFormat] = useState<TargetFormat>("png");
   const [statusMessage, setStatusMessage] = useState("");
   const [isError, setIsError] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
@@ -147,9 +144,9 @@ export default function Home() {
       return;
     }
 
-    if (!selectedFile.type.startsWith("image/")) {
+    if (selectedFile.type !== "image/png") {
       setIsError(true);
-      setStatusMessage("Only image files are allowed.");
+      setStatusMessage("Only PNG files are allowed.");
       return;
     }
 
@@ -170,7 +167,6 @@ export default function Home() {
           body: {
             filename: selectedFile.name,
             sourceMime: selectedFile.type || "application/octet-stream",
-            targetFormat,
           },
         },
       );
@@ -196,22 +192,42 @@ export default function Home() {
         );
       }
 
-      setStatusMessage(`Upload complete. Processing image ${data.imageId}...`);
+      setStatusMessage(`Upload complete. Building TGA variants in browser...`);
 
-      const { error: processError } = await supabase.functions.invoke<ProcessResponse>(
-        "process-image",
+      const variants = await convertPngToTgaVariants(selectedFile);
+      const convertedPathBase = `${session.user.id}/${data.imageId}`;
+
+      for (const variant of variants) {
+        const tgaPath = `${convertedPathBase}_${variant.suffix}.tga`;
+        const { error: tgaUploadError } = await supabase.storage
+          .from("portraits-converted")
+          .upload(tgaPath, variant.blob, {
+            upsert: true,
+            contentType: "image/x-tga",
+          });
+
+        if (tgaUploadError) {
+          throw new Error(`Failed to upload ${variant.suffix} TGA: ${tgaUploadError.message}`);
+        }
+      }
+
+      setStatusMessage(`Uploaded TGAs. Finalizing image ${data.imageId}...`);
+
+      const { error: finalizeError } = await supabase.functions.invoke<FinalizeResponse>(
+        "finalize-client-conversion",
         {
           body: {
             imageId: data.imageId,
+            convertedPathBase,
           },
         },
       );
 
-      if (processError) {
-        throw new Error(`Upload succeeded, processing failed: ${processError.message}`);
+      if (finalizeError) {
+        throw new Error(`Upload succeeded, finalize failed: ${finalizeError.message}`);
       }
 
-      setStatusMessage(`Upload and conversion complete for ${data.imageId}.`);
+      setStatusMessage(`PNG converted to 5 TGAs and saved for ${data.imageId}.`);
       setSelectedFile(null);
     } catch (error) {
       setIsError(true);
@@ -351,41 +367,23 @@ export default function Home() {
 
         <section className="panel">
           <h2 className="title">Upload</h2>
-          <p className="lead">Limit: 25 MiB. Accepted: image files. Upload auto-processes now.</p>
+          <p className="lead">Limit: 25 MiB. Accepted: PNG only. Conversion to 5 TGAs happens in your browser.</p>
 
           <form className="stack" onSubmit={handleUpload}>
             <div className="row">
               <div className="stack">
                 <label className="label" htmlFor="file">
-                  Image file
+                  PNG file
                 </label>
                 <input
                   id="file"
                   className="input"
                   type="file"
-                  accept="image/*"
+                  accept="image/png"
                   onChange={(event) =>
                     setSelectedFile(event.target.files?.[0] ?? null)
                   }
                 />
-              </div>
-
-              <div className="stack">
-                <label className="label" htmlFor="target-format">
-                  Target format
-                </label>
-                <select
-                  id="target-format"
-                  className="select"
-                  value={targetFormat}
-                  onChange={(event) =>
-                    setTargetFormat(event.target.value as TargetFormat)
-                  }
-                >
-                  <option value="png">png</option>
-                  <option value="jpg">jpg</option>
-                  <option value="webp">webp</option>
-                </select>
               </div>
             </div>
 

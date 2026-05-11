@@ -29,8 +29,11 @@ type ImageRow = {
   user_id: string;
   original_path: string;
   converted_path: string | null;
+  target_format: string;
   created_at: string;
 };
+
+const tgaSuffixes = ["H", "L", "M", "S", "T"];
 
 const MAX_FILES_PER_EXPORT = 1000;
 const MAX_TOTAL_INPUT_BYTES = 200 * 1024 * 1024;
@@ -107,7 +110,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: rows, error: rowsError } = await adminClient
     .from("images")
-    .select("id, user_id, original_path, converted_path, created_at")
+    .select("id, user_id, original_path, converted_path, target_format, created_at")
     .order("created_at", { ascending: false })
     .limit(MAX_FILES_PER_EXPORT);
 
@@ -130,29 +133,56 @@ Deno.serve(async (req: Request) => {
   let totalInputBytes = 0;
 
   for (const row of imageRows) {
-    const useConverted = typeof row.converted_path === "string" && row.converted_path.length > 0;
-    const path = useConverted ? (row.converted_path as string) : row.original_path;
-    const bucket = useConverted ? "portraits-converted" : "portraits-original";
+    const convertedBase =
+      typeof row.converted_path === "string" && row.converted_path.length > 0
+        ? row.converted_path
+        : null;
 
-    const { data: blob, error: downloadError } = await adminClient.storage
-      .from(bucket)
-      .download(path);
+    if (convertedBase && row.target_format === "tga") {
+      for (const suffix of tgaSuffixes) {
+        const tgaPath = `${convertedBase}_${suffix}.tga`;
 
-    if (downloadError || !blob) {
+        const { data: blob, error: downloadError } = await adminClient.storage
+          .from("portraits-converted")
+          .download(tgaPath);
+
+        if (downloadError || !blob) {
+          skippedCount += 1;
+          continue;
+        }
+
+        if (totalInputBytes + blob.size > MAX_TOTAL_INPUT_BYTES) {
+          skippedCount += 1;
+          continue;
+        }
+
+        const bytes = await blob.arrayBuffer();
+        const fileName = `${row.id}_${suffix}.tga`;
+        zip.file(`${row.user_id}/${fileName}`, bytes);
+        totalInputBytes += blob.size;
+        includedCount += 1;
+      }
+      continue;
+    }
+
+    const { data: originalBlob, error: originalError } = await adminClient.storage
+      .from("portraits-original")
+      .download(row.original_path);
+
+    if (originalError || !originalBlob) {
       skippedCount += 1;
       continue;
     }
 
-    if (totalInputBytes + blob.size > MAX_TOTAL_INPUT_BYTES) {
+    if (totalInputBytes + originalBlob.size > MAX_TOTAL_INPUT_BYTES) {
       skippedCount += 1;
       continue;
     }
 
-    const bytes = await blob.arrayBuffer();
-    const fallbackName = `${row.id}${useConverted ? "" : "_original"}`;
-    const fileName = path.split("/").pop() ?? fallbackName;
-    zip.file(`${row.user_id}/${fileName}`, bytes);
-    totalInputBytes += blob.size;
+    const originalBytes = await originalBlob.arrayBuffer();
+    const originalName = row.original_path.split("/").pop() ?? `${row.id}_original.png`;
+    zip.file(`${row.user_id}/${originalName}`, originalBytes);
+    totalInputBytes += originalBlob.size;
     includedCount += 1;
   }
 

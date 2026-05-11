@@ -6,17 +6,17 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+type FinalizeRequest = {
+  imageId: string;
+  convertedPathBase: string;
+};
+
 function errorResponse(message: string, status: number): Response {
   return new Response(message, {
     status,
     headers: corsHeaders,
   });
 }
-
-type UploadRequest = {
-  filename: string;
-  sourceMime: string;
-};
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -49,61 +49,55 @@ Deno.serve(async (req: Request) => {
     return errorResponse("Unauthorized", 401);
   }
 
-  let body: UploadRequest;
+  let body: FinalizeRequest;
   try {
     body = await req.json();
   } catch {
     return errorResponse("Invalid JSON", 400);
   }
 
-  const { filename, sourceMime } = body;
-  if (!filename || !sourceMime) {
+  if (!body.imageId || !body.convertedPathBase) {
     return errorResponse("Missing required fields", 400);
   }
 
-  if (sourceMime !== "image/png") {
-    return errorResponse("Only PNG uploads are supported", 400);
+  const expectedPrefix = `${userData.user.id}/`;
+  if (!body.convertedPathBase.startsWith(expectedPrefix)) {
+    return errorResponse("Invalid converted path base", 400);
   }
 
-  const normalized = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const objectPath = `${userData.user.id}/${crypto.randomUUID()}_${normalized}`;
-
-  const { data: signedData, error: signedError } = await supabase.storage
-    .from("portraits-original")
-    .createSignedUploadUrl(objectPath);
-
-  if (signedError || !signedData) {
-    return errorResponse(
-      `Failed to create upload URL: ${signedError?.message ?? "unknown"}`,
-      500,
-    );
-  }
-
-  const { data: imageRow, error: imageError } = await supabase
+  const { data: row, error: rowError } = await supabase
     .from("images")
-    .insert({
-      user_id: userData.user.id,
-      original_path: objectPath,
-      source_mime: sourceMime,
-      target_format: "tga",
-      status: "uploaded",
-    })
-    .select("id, original_path, status")
+    .select("id, user_id, status")
+    .eq("id", body.imageId)
     .single();
 
-  if (imageError || !imageRow) {
-    return errorResponse(
-      `Failed to insert image row: ${imageError?.message ?? "unknown"}`,
-      500,
-    );
+  if (rowError || !row) {
+    return errorResponse(`Image row not found: ${rowError?.message ?? "unknown"}`, 404);
+  }
+
+  if (row.user_id !== userData.user.id) {
+    return errorResponse("Forbidden", 403);
+  }
+
+  const { error: updateError } = await supabase
+    .from("images")
+    .update({
+      status: "ready",
+      converted_path: body.convertedPathBase,
+      target_format: "tga",
+      error_message: null,
+    })
+    .eq("id", body.imageId);
+
+  if (updateError) {
+    return errorResponse(`Failed to finalize row: ${updateError.message}`, 500);
   }
 
   return new Response(
     JSON.stringify({
-      imageId: imageRow.id,
-      objectPath,
-      token: signedData.token,
-      uploadUrl: `${supabaseUrl}/storage/v1/object/upload/sign/portraits-original/${objectPath}?token=${signedData.token}`,
+      imageId: body.imageId,
+      status: "ready",
+      convertedPathBase: body.convertedPathBase,
     }),
     {
       headers: {
