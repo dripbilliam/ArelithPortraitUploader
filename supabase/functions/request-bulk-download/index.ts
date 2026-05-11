@@ -29,6 +29,7 @@ type ImageRow = {
   user_id: string;
   original_path: string;
   converted_path: string | null;
+  filename_prefix: string | null;
   target_format: string;
   created_at: string;
 };
@@ -110,7 +111,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: rows, error: rowsError } = await adminClient
     .from("images")
-    .select("id, user_id, original_path, converted_path, target_format, created_at")
+    .select("id, user_id, original_path, converted_path, filename_prefix, target_format, created_at")
     .order("created_at", { ascending: false })
     .limit(MAX_FILES_PER_EXPORT);
 
@@ -133,6 +134,10 @@ Deno.serve(async (req: Request) => {
   let totalInputBytes = 0;
 
   for (const row of imageRows) {
+    const basePrefix = (row.filename_prefix && row.filename_prefix.length > 0)
+      ? row.filename_prefix
+      : row.id;
+
     const convertedBase =
       typeof row.converted_path === "string" && row.converted_path.length > 0
         ? row.converted_path
@@ -157,8 +162,8 @@ Deno.serve(async (req: Request) => {
         }
 
         const bytes = await blob.arrayBuffer();
-        const fileName = `${row.id}_${suffix}.tga`;
-        zip.file(`${row.user_id}/${fileName}`, bytes);
+        const fileName = `${basePrefix}${suffix}.tga`;
+        zip.file(fileName, bytes);
         totalInputBytes += blob.size;
         includedCount += 1;
       }
@@ -181,7 +186,7 @@ Deno.serve(async (req: Request) => {
 
     const originalBytes = await originalBlob.arrayBuffer();
     const originalName = row.original_path.split("/").pop() ?? `${row.id}_original.png`;
-    zip.file(`${row.user_id}/${originalName}`, originalBytes);
+    zip.file(`${basePrefix}_${originalName}`, originalBytes);
     totalInputBytes += originalBlob.size;
     includedCount += 1;
   }

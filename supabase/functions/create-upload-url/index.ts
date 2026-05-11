@@ -16,7 +16,21 @@ function errorResponse(message: string, status: number): Response {
 type UploadRequest = {
   filename: string;
   sourceMime: string;
+  filenamePrefix?: string;
 };
+
+const MAX_PREFIX_LENGTH = 64;
+
+function normalizePrefix(value: string): string {
+  const lower = value.toLowerCase();
+  const stripped = lower.replace(/[^a-z0-9_]/g, "_");
+  const collapsed = stripped.replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+  return collapsed.slice(0, MAX_PREFIX_LENGTH);
+}
+
+function makeGeneratedPrefix(): string {
+  return crypto.randomUUID().replace(/-/g, "").slice(0, MAX_PREFIX_LENGTH);
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -68,6 +82,21 @@ Deno.serve(async (req: Request) => {
   const normalized = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
   const objectPath = `${userData.user.id}/${crypto.randomUUID()}_${normalized}`;
 
+  const rawRequestedPrefix = typeof body.filenamePrefix === "string"
+    ? body.filenamePrefix
+    : "";
+  const userRequestedPrefix = rawRequestedPrefix.trim();
+  const normalizedRequestedPrefix = userRequestedPrefix.length > 0
+    ? normalizePrefix(userRequestedPrefix)
+    : null;
+
+  if (userRequestedPrefix.length > 0 && !normalizedRequestedPrefix) {
+    return errorResponse(
+      "Filename prefix must include letters, numbers, or underscores",
+      400,
+    );
+  }
+
   const { data: signedData, error: signedError } = await supabase.storage
     .from("portraits-original")
     .createSignedUploadUrl(objectPath);
@@ -79,21 +108,45 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  const { data: imageRow, error: imageError } = await supabase
-    .from("images")
-    .insert({
-      user_id: userData.user.id,
-      original_path: objectPath,
-      source_mime: sourceMime,
-      target_format: "tga",
-      status: "uploaded",
-    })
-    .select("id, original_path, status")
-    .single();
+  let imageRow: { id: string; original_path: string; status: string; filename_prefix: string } | null = null;
+  let insertError: { message?: string; code?: string } | null = null;
+  const maxInsertAttempts = 5;
 
-  if (imageError || !imageRow) {
+  for (let attempt = 0; attempt < maxInsertAttempts; attempt += 1) {
+    const candidatePrefix = normalizedRequestedPrefix ?? makeGeneratedPrefix();
+
+    const { data: insertedRow, error: imageError } = await supabase
+      .from("images")
+      .insert({
+        user_id: userData.user.id,
+        original_path: objectPath,
+        source_mime: sourceMime,
+        target_format: "tga",
+        filename_prefix: candidatePrefix,
+        status: "uploaded",
+      })
+      .select("id, original_path, status, filename_prefix")
+      .single();
+
+    if (!imageError && insertedRow) {
+      imageRow = insertedRow;
+      break;
+    }
+
+    insertError = imageError;
+    const isPrefixConflict = imageError?.code === "23505";
+    if (!isPrefixConflict) {
+      break;
+    }
+
+    if (normalizedRequestedPrefix) {
+      return errorResponse("That filename prefix is already in use", 409);
+    }
+  }
+
+  if (!imageRow) {
     return errorResponse(
-      `Failed to insert image row: ${imageError?.message ?? "unknown"}`,
+      `Failed to insert image row: ${insertError?.message ?? "unknown"}`,
       500,
     );
   }
@@ -101,6 +154,7 @@ Deno.serve(async (req: Request) => {
   return new Response(
     JSON.stringify({
       imageId: imageRow.id,
+      filenamePrefix: imageRow.filename_prefix,
       objectPath,
       token: signedData.token,
       uploadUrl: `${supabaseUrl}/storage/v1/object/upload/sign/portraits-original/${objectPath}?token=${signedData.token}`,

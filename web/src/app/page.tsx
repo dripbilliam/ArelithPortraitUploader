@@ -7,6 +7,7 @@ import { convertPngToTgaVariants } from "@/lib/tga";
 
 type UploadResponse = {
   imageId: string;
+  filenamePrefix: string;
   objectPath: string;
   token: string;
   uploadUrl: string;
@@ -35,6 +36,8 @@ export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [filenamePrefixInput, setFilenamePrefixInput] = useState("");
+  const [lastFilenamePrefix, setLastFilenamePrefix] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [isError, setIsError] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
@@ -44,6 +47,8 @@ export default function Home() {
   const loadSessionState = useCallback(async (currentUserId: string | null) => {
     if (!currentUserId) {
       setSelectedFile(null);
+      setFilenamePrefixInput("");
+      setLastFilenamePrefix("");
     }
   }, []);
 
@@ -167,6 +172,7 @@ export default function Home() {
           body: {
             filename: selectedFile.name,
             sourceMime: selectedFile.type || "application/octet-stream",
+            filenamePrefix: filenamePrefixInput,
           },
         },
       );
@@ -227,6 +233,7 @@ export default function Home() {
         throw new Error(`Upload succeeded, finalize failed: ${finalizeError.message}`);
       }
 
+      setLastFilenamePrefix(data.filenamePrefix);
       setStatusMessage(`PNG converted to 5 TGAs and saved for ${data.imageId}.`);
       setSelectedFile(null);
     } catch (error) {
@@ -236,6 +243,21 @@ export default function Home() {
       );
     } finally {
       setIsWorking(false);
+    }
+  };
+
+  const copyLastPrefix = async () => {
+    if (!lastFilenamePrefix) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(lastFilenamePrefix);
+      setIsError(false);
+      setStatusMessage(`Copied filename prefix: ${lastFilenamePrefix}`);
+    } catch {
+      setIsError(true);
+      setStatusMessage("Could not copy prefix automatically. Copy it manually.");
     }
   };
 
@@ -372,6 +394,20 @@ export default function Home() {
           <form className="stack" onSubmit={handleUpload}>
             <div className="row">
               <div className="stack">
+                <label className="label" htmlFor="filenamePrefix">
+                  Filename prefix (optional)
+                </label>
+                <input
+                  id="filenamePrefix"
+                  className="input"
+                  type="text"
+                  value={filenamePrefixInput}
+                  onChange={(event) => setFilenamePrefixInput(event.target.value)}
+                  maxLength={64}
+                  placeholder="Example: myportrait"
+                />
+                <p className="hint">Allowed: letters, numbers, underscores.</p>
+
                 <label className="label" htmlFor="file">
                   PNG file
                 </label>
@@ -398,6 +434,22 @@ export default function Home() {
             >
               {isWorking ? "Uploading..." : "Upload image"}
             </button>
+
+            {lastFilenamePrefix ? (
+              <div className="stack">
+                <p className="hint">
+                  Filename prefix for DM/server: <code className="mono">{lastFilenamePrefix}</code>
+                </p>
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={copyLastPrefix}
+                  disabled={isWorking}
+                >
+                  Copy filename prefix
+                </button>
+              </div>
+            ) : null}
           </form>
         </section>
 
