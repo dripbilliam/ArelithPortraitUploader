@@ -36,7 +36,7 @@ create index if not exists image_storage_reconcile_debug_event_idx
 
 do $$
 declare
-  DEFAULT_USER_ID uuid := '00000000-0000-0000-0000-000000000000'; -- TODO: set this
+  DEFAULT_USER_ID uuid := '03c34328-1b78-47d6-a2c7-a58fbef18ba0';
 begin
   -- Validate default user exists.
   if not exists (
@@ -157,7 +157,7 @@ begin
     'tga',
     'ready',
     'Recovered from orphaned storage files by reconcile script',
-    substr(md5(gen_random_uuid()::text), 1, 15),
+    substr(md5(gen_random_uuid()::text), 1, 10),
     'reconcile-script'
   from _storage_missing_db smd;
 

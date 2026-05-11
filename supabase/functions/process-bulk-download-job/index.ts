@@ -57,7 +57,7 @@ const DOWNLOAD_BATCH_CONCURRENCY = 12;
 function toSafePrefix(raw: string): string {
   const normalized = raw.toLowerCase().replace(/[^a-z0-9_]/g, "_");
   const compact = normalized.replace(/_+/g, "_").replace(/^_+|_+$/g, "");
-  const trimmed = compact.slice(0, 15);
+  const trimmed = compact.slice(0, 10);
   return trimmed || "portrait";
 }
 

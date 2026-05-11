@@ -23,7 +23,7 @@ type UploadRequest = {
 const allowedSourceMimes = new Set(["image/jpeg", "image/jpg"]);
 
 const PREFIX_RANDOM_HEAD_LENGTH = 3;
-const PREFIX_BODY_LENGTH = 11;
+const PREFIX_BODY_LENGTH = 6;
 const MAX_PREFIX_LENGTH = PREFIX_RANDOM_HEAD_LENGTH + 1 + PREFIX_BODY_LENGTH;
 const RANDOM_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -123,7 +123,7 @@ Deno.serve(async (req: Request) => {
 
   if (userRequestedPrefix.length > 0 && !normalizedRequestedPrefix) {
     return errorResponse(
-      "Filename prefix must include letters, numbers, or underscores (max 15 chars)",
+      "Filename prefix must include letters, numbers, or underscores (max 10 chars)",
       400,
     );
   }

@@ -60,7 +60,7 @@ Supabase changed defaults for Data API exposure on new projects. If the upload l
 Filename prefix notes:
 
 - Allowed characters: `a-z`, `0-9`, `_`
-- Max length: `15` characters (so files like `<prefix>H.tga` stay NWN-compatible)
+- Max length: `10` characters (so files like `<prefix>H.tga` stay NWN-compatible)
 
 ## What is included
 

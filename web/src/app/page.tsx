@@ -567,10 +567,10 @@ export default function Home() {
                   type="text"
                   value={filenamePrefixInput}
                   onChange={(event) => setFilenamePrefixInput(event.target.value)}
-                  maxLength={15}
+                  maxLength={10}
                   placeholder="Example: myportrait"
                 />
-                <p className="hint">We auto-format to 3 random chars + underscore + 11 chars from your prefix (or random if blank).</p>
+                <p className="hint">We auto-format to 3 random chars + underscore + 6 chars from your prefix (or random if blank).</p>
 
                 <label className="label" htmlFor="file">
                   JPG or PNG file

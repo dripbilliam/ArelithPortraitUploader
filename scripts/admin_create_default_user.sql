@@ -73,31 +73,9 @@ begin
       false
     );
 
-    -- Optional identity row for completeness in Auth UI flows.
-    begin
-      insert into auth.identities (
-        id,
-        user_id,
-        identity_data,
-        provider,
-        created_at,
-        updated_at,
-        last_sign_in_at
-      )
-      values (
-        gen_random_uuid()::text,
-        v_final_id,
-        jsonb_build_object('sub', v_final_id::text, 'email', DEFAULT_EMAIL),
-        'email',
-        now(),
-        now(),
-        now()
-      );
-    exception
-      when unique_violation then
-        -- Safe to ignore if identity already exists.
-        null;
-    end;
+    -- Intentionally skipping auth.identities insert.
+    -- Supabase auth schema fields can differ by version (for example provider_id constraints),
+    -- and this service user only needs a stable auth.users.id for admin ownership fallback.
 
     raise notice 'Default user created. user_id=% email=%', v_final_id, DEFAULT_EMAIL;
   end if;
