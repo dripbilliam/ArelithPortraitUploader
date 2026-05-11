@@ -66,6 +66,8 @@ Filename prefix notes:
 - Edge function to issue signed upload URL (`create-upload-url`)
 - Edge function to finalize client-side conversion (`finalize-client-conversion`)
 - Edge function to issue signed bulk download URLs (`request-bulk-download`)
+- Edge function worker to process queued bulk exports (`process-bulk-download-job`)
+- Edge function to poll bulk export job status (`get-bulk-download-job`)
 
 ## Prerequisites
 
@@ -97,6 +99,8 @@ supabase db push
 supabase functions deploy create-upload-url
 supabase functions deploy finalize-client-conversion
 supabase functions deploy request-bulk-download
+supabase functions deploy process-bulk-download-job
+supabase functions deploy get-bulk-download-job
 ```
 
 ## Required secrets for Edge Functions
@@ -124,8 +128,10 @@ supabase secrets set SUPABASE_ANON_KEY=<anon-key>
 2. Function stores a final `filename_prefix` (user provided or generated) and inserts an `images` row.
 3. Browser converts JPG/JPEG to NWN TGA variants (`H`, `L`, `M`, `S`, `T`) and uploads them to `portraits-converted`.
 4. Client calls `finalize-client-conversion` with `imageId` and base path to mark row `ready`, delete the transient original path, and dedupe against existing converted sets.
-5. Client calls `request-bulk-download` to generate and download one ZIP containing all users' stored images named as `<filename_prefix><size>.tga`.
-6. Old ZIP exports are cleaned up automatically after signed-link expiry plus a small buffer.
+5. Client calls `request-bulk-download` to enqueue a bulk export job.
+6. Client polls `get-bulk-download-job` until status is `ready`, then downloads using the returned signed URL.
+7. `process-bulk-download-job` performs ZIP creation in the background and writes progress/results to `public.bulk_export_jobs`.
+8. Old ZIP exports are cleaned up automatically after signed-link expiry plus a small buffer.
 
 ## Anti-abuse safety net
 

@@ -18,11 +18,27 @@ type FinalizeResponse = {
 };
 
 type BulkDownloadResponse = {
-  zipPath: string;
-  signedUrl: string;
+  jobId: string;
+  status: "queued" | "processing" | "ready" | "failed";
+  reused?: boolean;
+};
+
+type BulkDownloadJobStatus = {
+  jobId: string;
+  status: "queued" | "processing" | "ready" | "failed";
   fileCount: number;
   skippedCount: number;
+  zipPath: string | null;
+  signedUrl: string | null;
+  error: string | null;
 };
+
+const POLL_INTERVAL_MS = 1500;
+const POLL_MAX_ATTEMPTS = 120;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export default function Home() {
   const supabase = useMemo(() => getSupabaseClient(), []);
@@ -252,7 +268,7 @@ export default function Home() {
 
     setIsWorking(true);
     setIsError(false);
-    setStatusMessage("Gathering download links...");
+    setStatusMessage("Queueing bulk export...");
 
     try {
       const { data, error } = await supabase.functions.invoke<BulkDownloadResponse>(
@@ -263,13 +279,44 @@ export default function Home() {
         throw new Error(error?.message ?? "Failed to get download links");
       }
 
-      if (!data.signedUrl) {
-        setStatusMessage("No downloadable ZIP was generated.");
-        return;
+      let finalJob: BulkDownloadJobStatus | null = null;
+      for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
+        const { data: statusData, error: statusError } = await supabase.functions.invoke<BulkDownloadJobStatus>(
+          "get-bulk-download-job",
+          {
+            body: {
+              jobId: data.jobId,
+            },
+          },
+        );
+
+        if (statusError || !statusData) {
+          throw new Error(statusError?.message ?? "Failed to query bulk export job");
+        }
+
+        finalJob = statusData;
+        if (statusData.status === "ready" || statusData.status === "failed") {
+          break;
+        }
+
+        setStatusMessage(`Building ZIP in background... (${attempt + 1}/${POLL_MAX_ATTEMPTS})`);
+        await sleep(POLL_INTERVAL_MS);
+      }
+
+      if (!finalJob) {
+        throw new Error("No job status received");
+      }
+
+      if (finalJob.status === "failed") {
+        throw new Error(finalJob.error || "Bulk export failed");
+      }
+
+      if (!finalJob.signedUrl) {
+        throw new Error("ZIP is ready but no signed URL was returned");
       }
 
       const link = document.createElement("a");
-      link.href = data.signedUrl;
+      link.href = finalJob.signedUrl;
       link.download = "all-images.zip";
       link.rel = "noopener noreferrer";
       document.body.appendChild(link);
@@ -277,7 +324,7 @@ export default function Home() {
       document.body.removeChild(link);
 
       setStatusMessage(
-        `ZIP ready (${data.fileCount} files, ${data.skippedCount} skipped). Download started.`,
+        `ZIP ready (${finalJob.fileCount} files, ${finalJob.skippedCount} skipped). Download started.`,
       );
     } catch (error) {
       setIsError(true);
@@ -371,7 +418,7 @@ export default function Home() {
 
         <section className="panel">
           <h2 className="title">Upload</h2>
-          <p className="lead">Limit: 25 MiB. Accepted: JPG/JPEG only. Conversion to 5 TGAs happens in your browser.</p>
+          <p className="lead">Limit: 25 MiB. Accepted: JPG/JPEG only.</p>
 
           <form className="stack" onSubmit={handleUpload}>
             <div className="row">

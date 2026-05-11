@@ -37,6 +37,12 @@ verify_jwt = true
 [functions.request-bulk-download]
 verify_jwt = true
 
+[functions.process-bulk-download-job]
+verify_jwt = true
+
+[functions.get-bulk-download-job]
+verify_jwt = true
+
 [functions.process-image]
 verify_jwt = true
 
