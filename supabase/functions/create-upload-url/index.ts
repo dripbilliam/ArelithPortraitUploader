@@ -26,6 +26,35 @@ const PREFIX_RANDOM_HEAD_LENGTH = 3;
 const PREFIX_BODY_LENGTH = 6;
 const MAX_PREFIX_LENGTH = PREFIX_RANDOM_HEAD_LENGTH + 1 + PREFIX_BODY_LENGTH;
 const RANDOM_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
+const DEFAULT_TOTAL_IMAGES_PER_IP_LIMIT = 50;
+const TGA_VARIANTS_PER_UPLOAD = 5;
+
+type UploadLimitRow = {
+  images_per_ip_limit: number;
+};
+
+async function getUploadLimits(
+  adminClient: ReturnType<typeof createClient>,
+): Promise<{ imagesPerIpLimit: number }> {
+  const { data, error } = await adminClient
+    .from("api_upload_limits")
+    .select("images_per_ip_limit")
+    .eq("id", "global")
+    .maybeSingle();
+
+  if (error || !data) {
+    return {
+      imagesPerIpLimit: DEFAULT_TOTAL_IMAGES_PER_IP_LIMIT,
+    };
+  }
+
+  const row = data as UploadLimitRow;
+  return {
+    imagesPerIpLimit: Number.isFinite(row.images_per_ip_limit)
+      ? Math.max(1, Math.floor(row.images_per_ip_limit))
+      : DEFAULT_TOTAL_IMAGES_PER_IP_LIMIT,
+  };
+}
 
 function normalizePrefix(value: string): string {
   const lower = value.toLowerCase();
@@ -108,6 +137,29 @@ Deno.serve(async (req: Request) => {
 
   if (!allowedSourceMimes.has(sourceMime.toLowerCase())) {
     return errorResponse("Only JPG/JPEG uploads are supported", 400);
+  }
+
+  const limits = await getUploadLimits(adminClient);
+  const { count: existingUploadCount, error: uploadCountError } = await adminClient
+    .from("images")
+    .select("id", { count: "exact", head: true })
+    .eq("uploader_ip", identity.requesterIp);
+
+  if (uploadCountError) {
+    return errorResponse(
+      `Failed to evaluate upload limit: ${uploadCountError.message}`,
+      500,
+    );
+  }
+
+  const currentUploads = existingUploadCount ?? 0;
+  const projectedUploads = currentUploads + 1;
+  const projectedImages = projectedUploads * TGA_VARIANTS_PER_UPLOAD;
+  if (projectedImages > limits.imagesPerIpLimit) {
+    return errorResponse(
+      `Upload limit reached for this IP. Max total images: ${limits.imagesPerIpLimit}.`,
+      429,
+    );
   }
 
   const normalized = filename.replace(/[^a-zA-Z0-9._-]/g, "_");

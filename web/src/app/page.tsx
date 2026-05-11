@@ -474,7 +474,7 @@ export default function Home() {
   return (
     <main className="page">
       <div className="container">
-        <section className="panel">
+        <section className="panel panelHero">
           <h1 className="title">Arelith Portrait Uploader</h1>
           <p className="lead">
             Sign in, upload an image, and your current pipeline will store it as
@@ -645,13 +645,13 @@ export default function Home() {
             ) : (
               <div className="stack">
                 {myImages.map((image) => (
-                  <div key={image.id} className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: "0.75rem" }}>
-                    <div className="stack" style={{ gap: "0.15rem" }}>
+                  <div key={image.id} className="uploadsRow">
+                    <div className="uploadsMeta">
                       <p className="hint"><code className="mono">{image.filename_prefix}</code> - {image.status}</p>
                       <p className="hint">Uploaded {new Date(image.created_at).toLocaleString()}</p>
                     </div>
                     <button
-                      className="button secondary"
+                      className="button secondary deleteButton"
                       type="button"
                       disabled={isWorking}
                       onClick={() => handleDeleteImage(image)}

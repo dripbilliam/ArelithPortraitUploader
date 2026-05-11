@@ -34,10 +34,32 @@ create index if not exists image_storage_reconcile_debug_created_idx
 create index if not exists image_storage_reconcile_debug_event_idx
   on public.image_storage_reconcile_debug (event_type, created_at desc);
 
+create table if not exists public.api_upload_limits (
+  id text primary key,
+  images_per_ip_limit integer not null check (images_per_ip_limit > 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists api_upload_limits_set_updated_at on public.api_upload_limits;
+create trigger api_upload_limits_set_updated_at
+before update on public.api_upload_limits
+for each row
+execute function public.set_updated_at();
+
 do $$
 declare
   DEFAULT_USER_ID uuid := '03c34328-1b78-47d6-a2c7-a58fbef18ba0';
+  IMAGES_PER_IP_LIMIT integer := 50;
 begin
+  -- Upsert global upload limits consumed by create-upload-url.
+  insert into public.api_upload_limits (id, images_per_ip_limit)
+  values ('global', IMAGES_PER_IP_LIMIT)
+  on conflict (id) do update
+  set
+    images_per_ip_limit = excluded.images_per_ip_limit,
+    updated_at = now();
+
   -- Validate default user exists.
   if not exists (
     select 1

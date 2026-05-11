@@ -1,10 +1,17 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
+import { Cinzel, IBM_Plex_Mono, Sorts_Mill_Goudy } from "next/font/google";
 import "./globals.css";
 
-const spaceGrotesk = Space_Grotesk({
-  variable: "--font-space-grotesk",
+const cinzel = Cinzel({
+  variable: "--font-cinzel",
   subsets: ["latin"],
+  weight: ["500", "700"],
+});
+
+const sortsMillGoudy = Sorts_Mill_Goudy({
+  variable: "--font-sorts-mill-goudy",
+  subsets: ["latin"],
+  weight: ["400"],
 });
 
 const ibmPlexMono = IBM_Plex_Mono({
@@ -26,7 +33,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${spaceGrotesk.variable} ${ibmPlexMono.variable}`}
+      className={`${cinzel.variable} ${sortsMillGoudy.variable} ${ibmPlexMono.variable}`}
     >
       <body>{children}</body>
     </html>
